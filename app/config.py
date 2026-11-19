@@ -17,3 +17,6 @@ COOLDOWN_MIN = int(os.getenv("COOLDOWN_MIN", str(6 * 3600)))
 COOLDOWN_MAX = int(os.getenv("COOLDOWN_MAX", str(24 * 3600)))
 BURN_SECONDS = int(os.getenv("BURN_SECONDS", str(3 * 86400)))
 PRECHECK_TRIES = int(os.getenv("PRECHECK_TRIES", "5"))
+
+SCHEDULER_ENABLED = os.getenv("SCHEDULER_ENABLED", "true").strip().lower() in ("1", "true", "yes", "on")
+SCHEDULER_INTERVAL_SECONDS = max(60, int(os.getenv("SCHEDULER_INTERVAL_SECONDS", "21600")))
