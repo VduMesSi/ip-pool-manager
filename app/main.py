@@ -94,7 +94,7 @@ def refresh(family: str, authorization: str | None = Header(default=None)):
 def scan_refresh(family: str, authorization: str | None = Header(default=None)):
     authorize(authorization)
     if family not in engines:
-        raise HTTPException(status_code=409, detail=result)
+        raise HTTPException(404, "unknown family")
     result = engines[family].run_scan()
     if not result.get("ok"):
         raise HTTPException(409, result)
@@ -109,7 +109,7 @@ def mark_result(family: str, payload: ResultInput,
     if family not in engines:
         raise HTTPException(404, "unknown family")
     try:
-        engine.mark_result(payload.ip, payload.success)
+        engines[family].mark_result(payload.ip, payload.success)
     except (ValueError, KeyError) as e:
         raise HTTPException(400, str(e))
     return {"ok": True}
