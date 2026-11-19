@@ -257,6 +257,19 @@ class PoolEngine:
                         "stdout": stdout, "stderr": stderr}
 
             candidates = self._read_candidates(scan_output)
+            # A valid header-only CSV is a completed scan with no qualifying IPs.
+            try:
+                with scan_output.open("r", encoding="utf-8-sig", newline="") as f:
+                    header = next(csv.reader(f), [])
+            except OSError as e:
+                return {"ok": False, "reason": "cfst_output_unreadable", "detail": str(e)}
+            expected_latency_header = header[4].strip()
+            if (len(header) < 7
+                    or not header[0].strip().lower().startswith("ip")
+                    or expected_latency_header != "平均延迟"):
+                return {"ok": False, "reason": "cfst_output_invalid",
+                        "header": header[:7]}
+
             if self.family == "ipv6" and cidr_state is not None:
                 # A CIDR is healthy if CFST returns at least one successful address inside it.
                 # A failed observation increments its counter; three failed probes disable it
@@ -290,19 +303,6 @@ class PoolEngine:
                     "ipv6 CIDR health updated: probed=%d newly_valid=%d newly_banned=%d",
                     len(cidr_probe_networks), activated, banned
                 )
-            # A valid header-only CSV is a completed scan with no qualifying IPs.
-            try:
-                with scan_output.open("r", encoding="utf-8-sig", newline="") as f:
-                    header = next(csv.reader(f), [])
-            except OSError as e:
-                return {"ok": False, "reason": "cfst_output_unreadable", "detail": str(e)}
-            expected_latency_header = header[4].strip()
-            if (len(header) < 7
-                    or not header[0].strip().lower().startswith("ip")
-                    or expected_latency_header != "平均延迟"):
-                return {"ok": False, "reason": "cfst_output_invalid",
-                        "header": header[:7]}
-
             scan_output.replace(self.result)
             result = {"ok": True, "candidates": len(candidates),
                       "stdout": stdout, "stderr": stderr}
