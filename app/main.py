@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
-from .config import DATA_DIR, API_TOKEN, SCHEDULER_ENABLED, SCHEDULER_INTERVAL_SECONDS
+from .config import DATA_DIR, API_TOKEN, SCHEDULER_ENABLED, SCHEDULER_RUN_HOURS
 from .engine import PoolEngine
 from .scheduler import start_scheduler, stop_scheduler
 
@@ -17,7 +17,9 @@ async def lifespan(app: FastAPI):
     tasks = []
     if SCHEDULER_ENABLED:
         logging.getLogger("ip-pool.scheduler").info(
-            "automatic scheduler enabled; interval=%d seconds", SCHEDULER_INTERVAL_SECONDS
+            "automatic scheduler enabled; allowed run times=%s; timezone=%s",
+            ", ".join(f"{hour:02d}:00" for hour in SCHEDULER_RUN_HOURS),
+            os.getenv("TZ", "system local time"),
         )
         tasks = start_scheduler(engines)
     else:
@@ -50,7 +52,8 @@ def health():
         "ok": True,
         "service": "nas-ip-pool-manager",
         "scheduler_enabled": SCHEDULER_ENABLED,
-        "scheduler_interval_seconds": SCHEDULER_INTERVAL_SECONDS,
+        "scheduler_run_hours": list(SCHEDULER_RUN_HOURS),
+        "scheduler_timezone": os.getenv("TZ", "system-local"),
     }
 
 
@@ -91,7 +94,7 @@ def refresh(family: str, authorization: str | None = Header(default=None)):
 def scan_refresh(family: str, authorization: str | None = Header(default=None)):
     authorize(authorization)
     if family not in engines:
-        raise HTTPException(404, "unknown family")
+        raise HTTPException(status_code=409, detail=result)
     result = engines[family].run_scan()
     if not result.get("ok"):
         raise HTTPException(409, result)
@@ -106,7 +109,7 @@ def mark_result(family: str, payload: ResultInput,
     if family not in engines:
         raise HTTPException(404, "unknown family")
     try:
-        engines[family].mark_result(payload.ip, payload.success)
+        engine.mark_result(payload.ip, payload.success)
     except (ValueError, KeyError) as e:
         raise HTTPException(400, str(e))
     return {"ok": True}
