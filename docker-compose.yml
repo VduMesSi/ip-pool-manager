@@ -1,0 +1,29 @@
+services:
+  ip-pool-manager:
+    image: ghcr.io/vdumessi/ip-pool-manager:latest
+    container_name: ip-pool-manager
+    restart: unless-stopped
+
+    ports:
+      - "192.168.2.222:8088:8080"
+
+    environment:
+      TZ: Asia/Taipei
+      DATA_DIR: /data
+      CFST_BIN: /opt/ip-pool/bin/CloudflareST
+      API_TOKEN: ${IP_POOL_API_TOKEN:?Set IP_POOL_API_TOKEN in .env}
+      POOL_MAX: "30"
+      POOL_MIN: "12"
+      ADD_PER_REFRESH: "5"
+      FRESH_TOP: "60"
+      SAMPLE_RATIO: "0.5"
+      COOLDOWN_MIN: "21600"
+      COOLDOWN_MAX: "86400"
+      BURN_SECONDS: "259200"
+
+    volumes:
+      - ./data:/data
+      - ./bin:/opt/ip-pool/bin:ro
+
+    security_opt:
+      - no-new-privileges:true
