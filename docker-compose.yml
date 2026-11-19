@@ -16,6 +16,7 @@ services:
       FRESH_TOP: "60"
       SAMPLE_RATIO: "0.5"
       IPV6_SCAN_TARGET: "3000"
+      SCAN_TIMEOUT: "3600"
       COOLDOWN_MIN: "21600"
       COOLDOWN_MAX: "86400"
       BURN_SECONDS: "259200"
