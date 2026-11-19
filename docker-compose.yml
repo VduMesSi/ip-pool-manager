@@ -1,10 +1,8 @@
 services:
   ip-pool-manager:
-    image: ghcr.io/vdumessi/ip-pool-manager:latest
+    image: ghcr.nju.edu.cn/vdumessi/ip-pool-manager:latest
     container_name: ip-pool-manager
     restart: unless-stopped
-
-    # Share the NAS network stack so the container can use host IPv4/IPv6.
     network_mode: host
 
     environment:
