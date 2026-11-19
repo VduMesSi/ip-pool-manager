@@ -1,6 +1,6 @@
 services:
   ip-pool-manager:
-    image: ghcr.nju.edu.cn/vdumessi/ip-pool-manager:latest
+    image: ghcr.io/vdumessi/ip-pool-manager:latest
     container_name: ip-pool-manager
     restart: unless-stopped
     network_mode: host
@@ -19,7 +19,6 @@ services:
       COOLDOWN_MAX: "86400"
       BURN_SECONDS: "259200"
       SCHEDULER_ENABLED: "true"
-      SCHEDULER_INTERVAL_SECONDS: "21600"
 
     volumes:
       - ./data:/data
