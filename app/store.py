@@ -1,4 +1,4 @@
-import json, os, tempfile, threading, time
+import ipaddress, json, os, tempfile, threading, time
 from pathlib import Path
 
 class JsonStore:
@@ -8,17 +8,30 @@ class JsonStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
     def load(self):
+        empty = {"ips": {}, "burned": {}, "meta": {"created": time.time()}}
         with self.lock:
             if not self.path.exists():
-                return {"ips": {}, "burned": {}, "meta": {"created": time.time()}}
+                return empty
             try:
                 data = json.loads(self.path.read_text(encoding="utf-8"))
                 if not isinstance(data, dict):
                     raise ValueError("state root must be an object")
-                data.setdefault("ips", {})
-                data.setdefault("burned", {})
-                data.setdefault("meta", {})
-                return data
+                ips = data.get("ips", {})
+                burned = data.get("burned", {})
+                meta = data.get("meta", {})
+                if not isinstance(ips, dict) or not isinstance(burned, dict) or not isinstance(meta, dict):
+                    raise ValueError("state ips, burned and meta fields must be objects")
+                # Reject malformed records rather than allowing a later status/refresh crash.
+                for ip, record in ips.items():
+                    if not isinstance(ip, str) or not isinstance(record, dict):
+                        raise ValueError("invalid IP pool record")
+                    ipaddress.ip_address(ip)
+                for ip, until in burned.items():
+                    if not isinstance(ip, str):
+                        raise ValueError("invalid burned IP")
+                    ipaddress.ip_address(ip)
+                    float(until)
+                return {"ips": ips, "burned": burned, "meta": meta}
             except Exception:
                 backup = self.path.with_suffix(self.path.suffix + f".corrupt-{int(time.time())}")
                 try:
