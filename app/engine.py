@@ -190,8 +190,12 @@ class PoolEngine:
                     header = next(csv.reader(f), [])
             except OSError as e:
                 return {"ok": False, "reason": "cfst_output_unreadable", "detail": str(e)}
-            if len(header) < 5:
-                return {"ok": False, "reason": "cfst_output_invalid"}
+            expected_latency_header = header[4].strip()
+            if (len(header) < 7
+                    or not header[0].strip().lower().startswith("ip")
+                    or expected_latency_header != "平均延迟"):
+                return {"ok": False, "reason": "cfst_output_invalid",
+                        "header": header[:7]}
 
             scan_output.replace(self.result)
             return {"ok": True, "candidates": len(candidates),
