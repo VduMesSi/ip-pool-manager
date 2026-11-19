@@ -4,8 +4,8 @@ services:
     container_name: ip-pool-manager
     restart: unless-stopped
 
-    ports:
-      - "192.168.2.222:8088:8080"
+    # Share the NAS network stack so the container can use host IPv4/IPv6.
+    network_mode: host
 
     environment:
       TZ: Asia/Taipei
@@ -24,6 +24,7 @@ services:
     volumes:
       - ./data:/data
       - ./bin:/opt/ip-pool/bin:ro
+      - ./tmp:/tmp/cfst-test
 
     security_opt:
       - no-new-privileges:true
