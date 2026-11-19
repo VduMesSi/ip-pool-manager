@@ -1,4 +1,4 @@
-import logging, os
+import hmac, logging, os
 from pathlib import Path
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel
@@ -14,7 +14,7 @@ engines = {family: PoolEngine(family, DATA_DIR) for family in ("ipv4", "ipv6")}
 def authorize(authorization: str | None):
     if not API_TOKEN:
         raise HTTPException(status_code=503, detail="API_TOKEN is not configured")
-    if authorization != f"Bearer {API_TOKEN}":
+    if not isinstance(authorization, str) or not hmac.compare_digest(authorization, f"Bearer {API_TOKEN}"):
         raise HTTPException(status_code=401, detail="unauthorized")
 
 class ResultInput(BaseModel):
