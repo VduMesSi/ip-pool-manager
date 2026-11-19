@@ -1,4 +1,4 @@
-import csv, ipaddress, json, logging, os, random, socket, subprocess, threading, time
+import csv, ipaddress, json, logging, os, random, socket, subprocess, threading, time, tempfile
 from bisect import bisect_right
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -53,6 +53,8 @@ class PoolEngine:
         self.lock = threading.RLock()
         self.state = self.store.load()
         self.scan_lock = threading.Lock()
+        self.cidr_state_path = self.base / "ipv6_cidr_state.json" if family == "ipv6" else None
+        self.cidr_state_lock = threading.RLock()
 
     def status(self):
         now = time.time()
@@ -154,41 +156,74 @@ class PoolEngine:
             if len(lines) < 2:
                 return {"ok": False, "reason": "source file has fewer than 2 valid entries"}
 
+            cidr_probe_networks = []
+            cidr_state = None
             if self.family == "ipv6":
-                # Sample individual addresses uniformly from the union of all source CIDRs.
-                # Collapse overlapping/adjacent networks first to avoid duplicate weighting.
+                # Stage 1: probe only a small, rotating subset of source CIDRs.
+                # Stage 2: sample individual IPv6 addresses only from previously
+                # confirmed-good CIDRs. CIDR state is persisted independently of the IP pool.
                 networks = [ipaddress.ip_network(value) for value in lines]
-                merged = list(ipaddress.collapse_addresses(networks))
-                ranges = []
-                cumulative_ends = []
-                total_addresses = 0
-                for network in merged:
-                    start = int(network.network_address)
-                    count = network.num_addresses
-                    total_addresses += count
-                    ranges.append((start, count))
-                    cumulative_ends.append(total_addresses)
+                cidr_state = self._load_cidr_state()
+                now = time.time()
+                records = cidr_state["cidrs"]
 
-                target = min(max(1, IPV6_SCAN_TARGET), total_addresses)
-                if target == total_addresses:
-                    offsets = list(range(total_addresses))
-                else:
-                    selected_offsets = set()
-                    while len(selected_offsets) < target:
-                        selected_offsets.add(random.randrange(total_addresses))
-                    offsets = sorted(selected_offsets)
+                # Expired bans become eligible for a fresh probe; do not permanently delete them.
+                for network in networks:
+                    key = str(network)
+                    record = records.setdefault(key, {
+                        "fail_count": 0, "valid": False, "last_probe": 0,
+                        "last_success": 0, "banned_until": 0
+                    })
+                    if float(record.get("banned_until", 0)) <= now and record.get("banned_until"):
+                        record["banned_until"] = 0
+                        record["fail_count"] = 0
+                        record["valid"] = False
 
-                sampled = []
-                for offset in offsets:
-                    range_index = bisect_right(cumulative_ends, offset)
-                    previous_end = cumulative_ends[range_index - 1] if range_index else 0
-                    start, _ = ranges[range_index]
-                    sampled.append(str(ipaddress.IPv6Address(start + offset - previous_end)))
+                eligible = [
+                    n for n in networks
+                    if float(records[str(n)].get("banned_until", 0)) <= now
+                ]
+                probe_count = min(
+                    len(eligible),
+                    max(1, int(len(networks) * IPV6_CIDR_PROBE_RATIO + 0.999999))
+                )
+                # Oldest-tested CIDRs first ensures the whole source list is covered
+                # progressively instead of repeatedly choosing the same random subset.
+                eligible.sort(key=lambda n: (
+                    float(records[str(n)].get("last_probe", 0)),
+                    random.random()
+                ))
+                cidr_probe_networks = eligible[:probe_count]
+                for network in cidr_probe_networks:
+                    records[str(network)]["last_probe"] = now
 
+                valid_networks = [
+                    n for n in eligible
+                    if records[str(n)].get("valid") is True
+                    and n not in cidr_probe_networks
+                ]
+                sampled_ips = set()
+                # Draw unique addresses from known-good CIDRs only.
+                total_valid_addresses = sum(n.num_addresses for n in valid_networks)
+                target = min(max(0, IPV6_SCAN_TARGET), total_valid_addresses)
+                attempts = 0
+                max_attempts = max(target * 20, 100)
+                while len(sampled_ips) < target and attempts < max_attempts and valid_networks:
+                    network = random.choice(valid_networks)
+                    address = ipaddress.IPv6Address(
+                        int(network.network_address) + random.randrange(network.num_addresses)
+                    )
+                    sampled_ips.add(str(address))
+                    attempts += 1
+
+                sampled = [str(n) for n in cidr_probe_networks] + sorted(sampled_ips)
                 log.info(
-                    "ipv6 address sampling: %d source CIDRs, %d merged ranges, "
-                    "%s addresses available, %d unique addresses selected",
-                    len(lines), len(merged), total_addresses, len(sampled)
+                    "ipv6 staged sampling: source_cidrs=%d cidr_probes=%d (%.1f%%), "
+                    "known_good_cidrs=%d ip_targets=%d banned_cidrs=%d",
+                    len(networks), len(cidr_probe_networks),
+                    len(cidr_probe_networks) * 100.0 / max(1, len(networks)),
+                    len(valid_networks), len(sampled_ips),
+                    sum(1 for n in networks if float(records[str(n)].get("banned_until", 0)) > now)
                 )
             else:
                 k = max(2, min(len(lines), int(len(lines) * SAMPLE_RATIO)))
@@ -222,6 +257,39 @@ class PoolEngine:
                         "stdout": stdout, "stderr": stderr}
 
             candidates = self._read_candidates(scan_output)
+            if self.family == "ipv6" and cidr_state is not None:
+                # A CIDR is healthy if CFST returns at least one successful address inside it.
+                # A failed observation increments its counter; three failed probes disable it
+                # for a week. A later successful probe resets the counter.
+                candidate_addresses = []
+                for ip, _lat in candidates:
+                    try:
+                        candidate_addresses.append(ipaddress.IPv6Address(ip))
+                    except ValueError:
+                        pass
+                now = time.time()
+                activated = banned = 0
+                for network in cidr_probe_networks:
+                    record = cidr_state["cidrs"][str(network)]
+                    if any(address in network for address in candidate_addresses):
+                        if not record.get("valid"):
+                            activated += 1
+                        record["valid"] = True
+                        record["fail_count"] = 0
+                        record["last_success"] = now
+                        record["banned_until"] = 0
+                    else:
+                        record["fail_count"] = int(record.get("fail_count", 0)) + 1
+                        if record["fail_count"] >= IPV6_CIDR_FAIL_LIMIT:
+                            record["valid"] = False
+                            record["banned_until"] = now + IPV6_CIDR_BAN_SECONDS
+                            banned += 1
+                cidr_state.setdefault("meta", {})["last_scan"] = now
+                self._save_cidr_state(cidr_state)
+                log.info(
+                    "ipv6 CIDR health updated: probed=%d newly_valid=%d newly_banned=%d",
+                    len(cidr_probe_networks), activated, banned
+                )
             # A valid header-only CSV is a completed scan with no qualifying IPs.
             try:
                 with scan_output.open("r", encoding="utf-8-sig", newline="") as f:
@@ -236,13 +304,60 @@ class PoolEngine:
                         "header": header[:7]}
 
             scan_output.replace(self.result)
-            return {"ok": True, "candidates": len(candidates),
-                    "stdout": stdout, "stderr": stderr}
+            result = {"ok": True, "candidates": len(candidates),
+                      "stdout": stdout, "stderr": stderr}
+            if self.family == "ipv6":
+                result.update({
+                    "cidr_probed": len(cidr_probe_networks),
+                    "ipv6_ips_sampled": len(sampled_ips),
+                    "cidr_valid": sum(1 for r in cidr_state["cidrs"].values() if r.get("valid")),
+                    "cidr_banned": sum(1 for r in cidr_state["cidrs"].values()
+                                       if float(r.get("banned_until", 0)) > time.time())
+                })
+            return result
         except (OSError, UnicodeError) as e:
             log.exception("%s scan preparation or file operation failed", self.family)
             return {"ok": False, "reason": "scan_io_error", "detail": str(e)}
         finally:
             self.scan_lock.release()
+
+    def _load_cidr_state(self):
+        """Load persistent IPv6 CIDR health records without touching the IP pool state."""
+        path = self.cidr_state_path
+        empty = {"cidrs": {}, "meta": {"created": time.time()}}
+        with self.cidr_state_lock:
+            if not path.exists():
+                return empty
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                if not isinstance(data, dict) or not isinstance(data.get("cidrs", {}), dict):
+                    raise ValueError("invalid IPv6 CIDR state")
+                return {"cidrs": data.get("cidrs", {}), "meta": data.get("meta", {})}
+            except Exception:
+                backup = path.with_suffix(path.suffix + f".corrupt-{int(time.time())}")
+                try:
+                    path.replace(backup)
+                except OSError:
+                    pass
+                log.exception("IPv6 CIDR state is corrupt; starting a fresh CIDR health index")
+                return empty
+
+    def _save_cidr_state(self, state):
+        """Atomically persist CIDR health records."""
+        path = self.cidr_state_path
+        with self.cidr_state_lock:
+            fd, tmp = tempfile.mkstemp(prefix=path.name, suffix=".tmp", dir=path.parent)
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    json.dump(state, f, ensure_ascii=False, indent=2)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(tmp, path)
+            finally:
+                try:
+                    os.unlink(tmp)
+                except FileNotFoundError:
+                    pass
 
     def _assigned(self):
         # Pool-only stage has no outbound slot assignments yet.
