@@ -1,4 +1,4 @@
-name: Bootstrap and publish IP Pool Manager (one-time)
+name: Build and publish IP Pool Manager
 
 on:
   push:
@@ -6,6 +6,9 @@ on:
     paths:
       - "ip_pool_manager_ghcr_ready.zip"
       - ".github/workflows/bootstrap.yml"
+      - "Dockerfile"
+      - "requirements.txt"
+      - "app/**"
   workflow_dispatch:
 
 permissions:
@@ -13,11 +16,11 @@ permissions:
   packages: write
 
 concurrency:
-  group: ip-pool-manager-bootstrap
+  group: ip-pool-manager-build
   cancel-in-progress: false
 
 jobs:
-  bootstrap-and-publish:
+  build-and-publish:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -25,25 +28,23 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Extract project archive
+      - name: Extract project archive when present
         run: |
           set -euo pipefail
-          test -f ip_pool_manager_ghcr_ready.zip
-          mkdir -p /tmp/ip-pool-manager
-          echo "Archive contents:"
-          unzip -l ip_pool_manager_ghcr_ready.zip
-          unzip -q ip_pool_manager_ghcr_ready.zip -d /tmp/ip-pool-manager
-          echo "Extracted paths:"
-          find /tmp/ip-pool-manager -maxdepth 4 -type f -print
-          project_root="$(find /tmp/ip-pool-manager -name Dockerfile -type f -print -quit | xargs -r dirname)"
-          test -n "$project_root"
-          cp -a "$project_root"/. .
-          rm -f ip_pool_manager_ghcr_ready.zip
+          if [ -f ip_pool_manager_ghcr_ready.zip ]; then
+            mkdir -p /tmp/ip-pool-manager
+            unzip -q ip_pool_manager_ghcr_ready.zip -d /tmp/ip-pool-manager
+            project_root="$(find /tmp/ip-pool-manager -name Dockerfile -type f -print -quit | xargs -r dirname)"
+            test -n "$project_root"
+            cp -a "$project_root"/. .
+            rm -f .github/workflows/publish-image.yml
+            rm -f ip_pool_manager_ghcr_ready.zip
+          fi
           test -f Dockerfile
           test -f app/main.py
-          test -f .github/workflows/publish-image.yml
+          test -f requirements.txt
 
-      - name: Commit extracted project files
+      - name: Commit extracted project files when changed
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
