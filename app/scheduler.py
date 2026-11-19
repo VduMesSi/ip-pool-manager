@@ -1,11 +1,24 @@
 import asyncio
 import logging
 import time
+from datetime import datetime, timedelta
 
-from .config import SCHEDULER_INTERVAL_SECONDS
+from .config import SCHEDULER_RUN_HOURS
 from .engine import PoolEngine
 
 log = logging.getLogger("ip-pool.scheduler")
+
+
+def _next_run_time() -> datetime:
+    """Return the next allowed wall-clock run slot in the container's local timezone."""
+    now = datetime.now().astimezone()
+    for hour in SCHEDULER_RUN_HOURS:
+        candidate = now.replace(hour=hour, minute=0, second=0, microsecond=0)
+        if candidate > now:
+            return candidate
+    return (now + timedelta(days=1)).replace(
+        hour=SCHEDULER_RUN_HOURS[0], minute=0, second=0, microsecond=0
+    )
 
 
 async def _run_family(engine: PoolEngine) -> None:
@@ -59,22 +72,24 @@ async def _run_family(engine: PoolEngine) -> None:
 
 async def _family_loop(engine: PoolEngine) -> None:
     family = engine.family
-    interval = SCHEDULER_INTERVAL_SECONDS
     log.info(
-        "%s scheduler enabled; first run in %d seconds, then after each completed cycle",
-        family, interval,
+        "%s scheduler enabled; allowed run times are %s local time",
+        family, ", ".join(f"{hour:02d}:00" for hour in SCHEDULER_RUN_HOURS),
     )
 
-    loop = asyncio.get_running_loop()
-    next_run = loop.time() + interval
     while True:
-        await asyncio.sleep(max(0.0, next_run - loop.time()))
+        next_run = _next_run_time()
+        delay = max(0.0, (next_run - datetime.now(next_run.tzinfo)).total_seconds())
+        log.info(
+            "%s scheduler next run at %s",
+            family, next_run.isoformat(timespec="seconds"),
+        )
+        await asyncio.sleep(delay)
         await _run_family(engine)
-        next_run += interval
 
 
 def start_scheduler(engines: dict[str, PoolEngine]) -> list[asyncio.Task]:
-    """Start one independent periodic task for each address family."""
+    """Start one independent scheduled task for each address family."""
     return [
         asyncio.create_task(_family_loop(engine), name=f"ip-pool-scheduler-{family}")
         for family, engine in engines.items()
