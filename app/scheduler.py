@@ -65,9 +65,12 @@ async def _family_loop(engine: PoolEngine) -> None:
         family, interval,
     )
 
+    loop = asyncio.get_running_loop()
+    next_run = loop.time() + interval
     while True:
-        await asyncio.sleep(interval)
+        await asyncio.sleep(max(0.0, next_run - loop.time()))
         await _run_family(engine)
+        next_run += interval
 
 
 def start_scheduler(engines: dict[str, PoolEngine]) -> list[asyncio.Task]:
