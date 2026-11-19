@@ -73,30 +73,43 @@ class PoolEngine:
                 ],
             }
 
-    def _read_candidates(self):
+    def _read_candidates(self, result_path=None):
+        """Read CFST CSV, retaining only valid IPs of this engine's address family."""
         rows_out = []
-        if not self.result.exists():
+        path = Path(result_path) if result_path else self.result
+        if not path.exists():
             return rows_out
         try:
-            with self.result.open("r", encoding="utf-8-sig", newline="") as f:
+            with path.open("r", encoding="utf-8-sig", newline="") as f:
                 rows = list(csv.reader(f))
-        except Exception as e:
-            log.exception("%s result CSV read failed", self.family)
+        except Exception:
+            log.exception("%s result CSV read failed: %s", self.family, path)
             return rows_out
+
+        if not rows:
+            return rows_out
+
+        # XIU2/CFST CSV: IP 地址,已发送,已接收,丢包率,平均延迟,下载速度(MB/s),地区码
+        # Average latency is the fifth column (zero-based index 4).
+        header = [x.strip().lstrip("\ufeff") for x in rows[0]]
+        if len(header) < 5 or not (header[0].lower().startswith("ip") or "IP" in header[0]):
+            log.error("%s CFST CSV has an unexpected header: %s", self.family, header)
+            return rows_out
+
         for row in rows[1:]:
-            if not row or not row[0].strip():
+            if not row or len(row) < 5 or not row[0].strip():
                 continue
             ip = row[0].strip()
             if not valid_ip(ip, self.version):
                 continue
             try:
-                lat = float(row[4]) if len(row) > 4 else 100.0
-                if lat <= 0 or lat > 60000:
+                lat = float(row[4])
+                if not (0 < lat <= 60000):
                     continue
             except (ValueError, TypeError):
                 continue
             rows_out.append((ip, lat))
-        # Deduplicate while keeping the lowest observed latency.
+
         best = {}
         for ip, lat in rows_out:
             best[ip] = min(lat, best.get(ip, float("inf")))
@@ -105,44 +118,87 @@ class PoolEngine:
     def run_scan(self, force=False):
         if not self.scan_lock.acquire(blocking=False):
             return {"ok": False, "reason": "scan_already_running"}
+        scan_input = self.base / f".{self.family}.cfst_input.tmp.txt"
+        scan_output = self.base / f".{self.family}.cfst_result.tmp.csv"
         try:
-            if not CFST_BIN.exists():
+            if not CFST_BIN.is_file():
                 return {"ok": False, "reason": f"CFST binary not found: {CFST_BIN}"}
-            if not self.source.exists():
+            if not os.access(CFST_BIN, os.X_OK):
+                return {"ok": False, "reason": f"CFST binary is not executable: {CFST_BIN}"}
+            if not self.source.is_file():
                 return {"ok": False, "reason": f"source file not found: {self.source}"}
-            lines = [x.strip() for x in self.source.read_text(encoding="utf-8").splitlines()
-                     if x.strip() and not x.lstrip().startswith("#")]
+
+            raw_lines = self.source.read_text(encoding="utf-8-sig").splitlines()
+            lines, invalid = [], []
+            seen = set()
+            for raw in raw_lines:
+                value = raw.strip()
+                if not value or value.startswith("#"):
+                    continue
+                try:
+                    network = ipaddress.ip_network(value, strict=False)
+                    if network.version != self.version:
+                        raise ValueError("address family mismatch")
+                    normalized = str(network)
+                except ValueError:
+                    invalid.append(value)
+                    continue
+                if normalized not in seen:
+                    seen.add(normalized)
+                    lines.append(normalized)
+
+            if invalid:
+                return {"ok": False, "reason": "source_contains_invalid_or_wrong_family_entries",
+                        "invalid_count": len(invalid), "invalid_examples": invalid[:5]}
             if len(lines) < 2:
-                return {"ok": False, "reason": "source file has fewer than 2 entries"}
+                return {"ok": False, "reason": "source file has fewer than 2 valid entries"}
+
             k = max(2, min(len(lines), int(len(lines) * SAMPLE_RATIO)))
             sampled = random.sample(lines, k) if k < len(lines) else lines
-            scan_input = self.base / "cfst_input.tmp.txt"
-            scan_input.write_text("\\n".join(sampled) + "\\n", encoding="utf-8")
-            # CloudflareSpeedTest writes result.csv in its working directory by default.
-            default_output = self.base / "result.csv"
-            if default_output.exists():
-                default_output.unlink()
-            if self.result.exists():
-                self.result.unlink()
-            cmd = [str(CFST_BIN), "-f", str(scan_input), "-n", "50", "-tl", "99",
-                   "-dd", "-tlr", "0", "-p", "0"]
-            log.info("%s CFST scan started (%d source entries)", self.family, len(sampled))
+
+            # Write actual newline characters; CFST expects one network/IP per line.
+            scan_input.write_text("\n".join(sampled) + "\n", encoding="utf-8")
+            scan_output.unlink(missing_ok=True)
+
+            # Use an explicit temporary output so a failed scan never destroys the last good CSV.
+            cmd = [str(CFST_BIN), "-f", str(scan_input), "-o", str(scan_output),
+                   "-n", "50", "-tl", "99", "-dd", "-tlr", "0", "-p", "0"]
+            log.info("%s CFST scan started (%d source entries, %d sampled)",
+                     self.family, len(lines), len(sampled))
             try:
                 p = subprocess.run(cmd, cwd=str(self.base), capture_output=True,
                                    timeout=SCAN_TIMEOUT, check=False)
             except subprocess.TimeoutExpired:
                 return {"ok": False, "reason": "scan_timeout"}
+            except OSError as e:
+                log.exception("%s CFST process could not start", self.family)
+                return {"ok": False, "reason": "cfst_start_failed", "detail": str(e)}
+
+            stdout = p.stdout.decode("utf-8", "replace")[-2000:]
+            stderr = p.stderr.decode("utf-8", "replace")[-2000:]
             if p.returncode != 0:
-                return {"ok": False, "reason": "cfst_failed",
-                        "stderr": p.stderr.decode("utf-8", "replace")[-2000:]}
-            if default_output.exists():
-                default_output.replace(self.result)
-            if not self.result.exists():
+                return {"ok": False, "reason": "cfst_failed", "returncode": p.returncode,
+                        "stderr": stderr, "stdout": stdout}
+            if not scan_output.is_file():
                 return {"ok": False, "reason": "cfst_output_missing",
-                        "stdout": p.stdout.decode("utf-8", "replace")[-2000:]}
-            candidates = self._read_candidates()
+                        "stdout": stdout, "stderr": stderr}
+
+            candidates = self._read_candidates(scan_output)
+            # A valid header-only CSV is a completed scan with no qualifying IPs.
+            try:
+                with scan_output.open("r", encoding="utf-8-sig", newline="") as f:
+                    header = next(csv.reader(f), [])
+            except OSError as e:
+                return {"ok": False, "reason": "cfst_output_unreadable", "detail": str(e)}
+            if len(header) < 5:
+                return {"ok": False, "reason": "cfst_output_invalid"}
+
+            scan_output.replace(self.result)
             return {"ok": True, "candidates": len(candidates),
-                    "stdout": p.stdout.decode("utf-8", "replace")[-2000:]}
+                    "stdout": stdout, "stderr": stderr}
+        except (OSError, UnicodeError) as e:
+            log.exception("%s scan preparation or file operation failed", self.family)
+            return {"ok": False, "reason": "scan_io_error", "detail": str(e)}
         finally:
             self.scan_lock.release()
 
