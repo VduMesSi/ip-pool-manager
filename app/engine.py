@@ -5,8 +5,9 @@ from pathlib import Path
 
 from .config import (
     CFST_BIN, SCAN_TIMEOUT, SCAN_WORKERS, POOL_MAX, POOL_MIN,
-    ADD_PER_REFRESH, FRESH_TOP, SAMPLE_RATIO, IPV6_SCAN_TARGET, COOLDOWN_MIN,
-    COOLDOWN_MAX, BURN_SECONDS, PRECHECK_TRIES
+    ADD_PER_REFRESH, FRESH_TOP, SAMPLE_RATIO, IPV6_SCAN_TARGET,
+    IPV6_CIDR_PROBE_RATIO, IPV6_CIDR_FAIL_LIMIT, IPV6_CIDR_BAN_SECONDS,
+    COOLDOWN_MIN, COOLDOWN_MAX, BURN_SECONDS, PRECHECK_TRIES
 )
 from .store import JsonStore
 
@@ -343,7 +344,7 @@ class PoolEngine:
                 return empty
 
     def _save_cidr_state(self, state):
-        """Atomically persist CIDR health records."""
+        """Atomically persist IPv6 CIDR health records."""
         path = self.cidr_state_path
         with self.cidr_state_lock:
             fd, tmp = tempfile.mkstemp(prefix=path.name, suffix=".tmp", dir=path.parent)
