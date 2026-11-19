@@ -1,10 +1,11 @@
 import csv, ipaddress, json, logging, os, random, socket, subprocess, threading, time
+from bisect import bisect_right
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from .config import (
     CFST_BIN, SCAN_TIMEOUT, SCAN_WORKERS, POOL_MAX, POOL_MIN,
-    ADD_PER_REFRESH, FRESH_TOP, SAMPLE_RATIO, COOLDOWN_MIN,
+    ADD_PER_REFRESH, FRESH_TOP, SAMPLE_RATIO, IPV6_SCAN_TARGET, COOLDOWN_MIN,
     COOLDOWN_MAX, BURN_SECONDS, PRECHECK_TRIES
 )
 from .store import JsonStore
@@ -153,17 +154,54 @@ class PoolEngine:
             if len(lines) < 2:
                 return {"ok": False, "reason": "source file has fewer than 2 valid entries"}
 
-            k = max(2, min(len(lines), int(len(lines) * SAMPLE_RATIO)))
-            sampled = random.sample(lines, k) if k < len(lines) else lines
+            if self.family == "ipv6":
+                # Sample individual addresses uniformly from the union of all source CIDRs.
+                # Collapse overlapping/adjacent networks first to avoid duplicate weighting.
+                networks = [ipaddress.ip_network(value) for value in lines]
+                merged = list(ipaddress.collapse_addresses(networks))
+                ranges = []
+                cumulative_ends = []
+                total_addresses = 0
+                for network in merged:
+                    start = int(network.network_address)
+                    count = network.num_addresses
+                    total_addresses += count
+                    ranges.append((start, count))
+                    cumulative_ends.append(total_addresses)
 
-            # Write actual newline characters; CFST expects one network/IP per line.
+                target = min(max(1, IPV6_SCAN_TARGET), total_addresses)
+                if target == total_addresses:
+                    offsets = list(range(total_addresses))
+                else:
+                    selected_offsets = set()
+                    while len(selected_offsets) < target:
+                        selected_offsets.add(random.randrange(total_addresses))
+                    offsets = sorted(selected_offsets)
+
+                sampled = []
+                for offset in offsets:
+                    range_index = bisect_right(cumulative_ends, offset)
+                    previous_end = cumulative_ends[range_index - 1] if range_index else 0
+                    start, _ = ranges[range_index]
+                    sampled.append(str(ipaddress.IPv6Address(start + offset - previous_end)))
+
+                log.info(
+                    "ipv6 address sampling: %d source CIDRs, %d merged ranges, "
+                    "%s addresses available, %d unique addresses selected",
+                    len(lines), len(merged), total_addresses, len(sampled)
+                )
+            else:
+                k = max(2, min(len(lines), int(len(lines) * SAMPLE_RATIO)))
+                sampled = random.sample(lines, k) if k < len(lines) else lines
+
+            # CFST accepts one IP/CIDR per line. IPv6 input is now individual addresses.
             scan_input.write_text("\n".join(sampled) + "\n", encoding="utf-8")
             scan_output.unlink(missing_ok=True)
 
             # Use an explicit temporary output so a failed scan never destroys the last good CSV.
             cmd = [str(CFST_BIN), "-f", str(scan_input), "-o", str(scan_output),
                    "-n", "50", "-tl", "120", "-dd", "-tlr", "0", "-p", "0"]
-            log.info("%s CFST scan started (%d source entries, %d sampled)",
+            log.info("%s CFST scan started (%d source entries, %d test targets)",
                      self.family, len(lines), len(sampled))
             try:
                 p = subprocess.run(cmd, cwd=str(self.base), capture_output=True,
