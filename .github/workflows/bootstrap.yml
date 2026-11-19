@@ -1,4 +1,4 @@
-name: Bootstrap and publish IP Pool Manager
+name: Bootstrap and publish IP Pool Manager (one-time)
 
 on:
   push:
