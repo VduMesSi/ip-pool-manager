@@ -118,7 +118,6 @@ def _run_batch(engine,ips,batch_no,quality,day):
     if not engine.scan_lock.acquire(blocking=False):
         raise RuntimeError(f"{engine.family} scan already running; batch skipped")
     try:
-        if not _internet_ok(): raise RuntimeError("outbound connectivity check failed before batch")
         base=engine.base
         input_path=base/f".scheduled_{batch_no}.txt"
         output_path=base/f".scheduled_{batch_no}.csv"
@@ -140,7 +139,6 @@ def _run_batch(engine,ips,batch_no,quality,day):
             writer=csv.writer(f); writer.writerow(header)
             for ip,lat in sorted(existing.items(),key=lambda x:x[1]):
                 writer.writerow([ip,4,4,"0.00",f"{lat:.2f}","0.00","N/A"])
-        if not _internet_ok(): raise RuntimeError("outbound connectivity check failed after batch; remaining batches stopped")
         log.info("%s batch %d: targets=%d results=%d duration=%.1fs",
                  engine.family,batch_no,len(ips),len(results),time.monotonic()-started)
         return len(results)
