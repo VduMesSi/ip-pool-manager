@@ -280,7 +280,6 @@ class PoolEngine:
                 key=lambda x: (0 if x[0] in permanent else 1, permanent.get(x[0], x[1]), x[1])
             )[:FRESH_TOP]
 
-        random.shuffle(fresh)
         batch = fresh[:max(want * 3, want)]
         accepted = []
         if batch and want > 0:

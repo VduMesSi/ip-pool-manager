@@ -98,6 +98,17 @@ def _internet_ok():
     log.error("WAN check failed: fewer than 2/3 targets reachable in all 3 rounds")
     return False
 
+def _write_csv_atomic(path,header,rows):
+    temp=path.with_name(f".{path.name}.tmp")
+    try:
+        with temp.open("w",encoding="utf-8-sig",newline="") as f:
+            writer=csv.writer(f)
+            writer.writerow(header)
+            writer.writerows(rows)
+        temp.replace(path)
+    finally:
+        temp.unlink(missing_ok=True)
+
 def _parse_csv(path,family):
     with path.open("r",encoding="utf-8-sig",newline="") as f: rows=list(csv.reader(f))
     if not rows or len(rows[0])<5 or rows[0][4].strip()!="平均延迟":
@@ -146,10 +157,8 @@ def _run_batch(engine,ips,batch_no,quality,day):
         for ip,item in results.items():
             if ip not in existing or item[0]<existing[ip][0]:
                 existing[ip]=item
-        with engine.result.open("w",encoding="utf-8-sig",newline="") as f:
-            writer=csv.writer(f); writer.writerow(header)
-            for ip,(_,_,row) in sorted(existing.items(),key=lambda x:x[1][0]):
-                writer.writerow(row)
+        rows=(row for _,(_,_,row) in sorted(existing.items(),key=lambda x:x[1][0]))
+        _write_csv_atomic(engine.result,header,rows)
         log.info("%s batch %d: targets=%d results=%d duration=%.1fs",
                  engine.family,batch_no,len(ips),len(results),time.monotonic()-started)
         return len(results)
@@ -167,10 +176,8 @@ def _append_permanent_candidates(engine,quality):
     for ip,lat in quality.active(engine.family):
         if ip not in existing:
             existing[ip]=(lat,0.0,[ip,"","","",f"{lat:.2f}","",""])
-    with engine.result.open("w",encoding="utf-8-sig",newline="") as f:
-        writer=csv.writer(f); writer.writerow(header)
-        for ip,(_,_,row) in sorted(existing.items(),key=lambda x:x[1][0]):
-            writer.writerow(row)
+    rows=(row for _,(_,_,row) in sorted(existing.items(),key=lambda x:x[1][0]))
+    _write_csv_atomic(engine.result,header,rows)
 
 async def run_full_cycle(engines):
     if CYCLE_LOCK.locked(): return {"ok":False,"reason":"cycle_already_running"}
