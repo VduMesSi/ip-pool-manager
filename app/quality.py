@@ -36,7 +36,7 @@ class QualityStore:
         return db
     def record(self, ip, family, day, latency, loss=0.0):
         parsed=ipaddress.ip_address(ip)
-        if (family == "ipv4") != (parsed.version == 4):
+        if (family.startswith("ipv4")) != (parsed.version == 4):
             return
         day=day.isoformat() if hasattr(day, "isoformat") else str(day)
         with self.lock, self._connect() as db:
