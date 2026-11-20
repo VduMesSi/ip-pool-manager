@@ -153,16 +153,23 @@ def _run_batch(engine,ips,batch_no,quality,day):
         if not output_path.is_file():
             stdout=proc.stdout.decode("utf-8","replace")[-4000:]
             stderr=proc.stderr.decode("utf-8","replace")[-4000:]
-            input_exists=input_path.is_file()
-            input_size=input_path.stat().st_size if input_exists else None
+            if proc.returncode == 0:
+                log.info(
+                    "%s batch %d: CFST completed with zero qualifying IPs; "
+                    "no CSV was created; previous result data retained; "
+                    "targets=%d duration=%.1fs stdout=%r stderr_tail=%r",
+                    engine.family,batch_no,len(ips),time.monotonic()-started,
+                    stdout,stderr[-1200:],
+                )
+                return 0
             log.error(
-                "CFST output missing: family=%s batch=%d rc=%d cwd=%s input=%s "
-                "input_exists=%s input_bytes=%s output=%s stdout=%r stderr=%r",
+                "CFST output missing after nonzero exit: family=%s batch=%d rc=%d "
+                "cwd=%s input=%s output=%s stdout=%r stderr=%r",
                 engine.family,batch_no,proc.returncode,base,input_path,
-                input_exists,input_size,output_path,stdout,stderr,
+                output_path,stdout,stderr,
             )
             raise RuntimeError(
-                f"CFST output CSV missing (rc={proc.returncode}, output={output_path})"
+                f"CFST output missing after nonzero exit (rc={proc.returncode})"
             )
         header,results=_parse_csv(output_path,engine.family)
         for ip,(lat,loss,_) in results.items():
@@ -204,9 +211,9 @@ async def run_full_cycle(engines):
         started=time.monotonic()
         quality=QualityStore(DATA_DIR/"quality"/"ip_quality.sqlite3")
         day=datetime.now(TZ).date()
-        candidates={f:_source_candidates(engines[f],quality,TOTAL_TARGET//2) for f in ("ipv4","ipv6")}
+        candidates={f:_source_candidates(engines[f],quality,TOTAL_TARGET//2) for f in ("ipv6_cf","ipv6_other")}
         # Reallocate a shortfall to the other family while keeping the combined cap.
-        for family in ("ipv4","ipv6"):
+        for family in ("ipv6_cf","ipv6_other"):
             if sum(map(len,candidates.values()))>=TOTAL_TARGET: break
             need=TOTAL_TARGET-sum(map(len,candidates.values()))
             more=_source_candidates(engines[family],quality,len(candidates[family])+need)
@@ -221,8 +228,8 @@ async def run_full_cycle(engines):
                 if i<len(queues[family]): schedule.append((family,queues[family][i]))
         if not schedule: return {"ok":False,"reason":"no_scan_targets"}
         total=sum(len(batch) for _,batch in schedule)
-        log.info("scan cycle started: total=%d ipv4=%d ipv6=%d batches=%d",
-                 total,len(candidates["ipv4"]),len(candidates["ipv6"]),len(schedule))
+        log.info("scan cycle started: total=%d ipv6_cf=%d ipv6_other=%d batches=%d",
+                 total,len(candidates["ipv6_cf"]),len(candidates["ipv6_other"]),len(schedule))
         completed=[]
         for index,(family,ips) in enumerate(schedule,1):
             if not _internet_ok():
@@ -245,7 +252,7 @@ async def run_full_cycle(engines):
                 }
             completed.append({"family":family,"targets":len(ips),"results":count})
             if index<len(schedule): await asyncio.sleep(BATCH_PAUSE_SECONDS)
-        for family in ("ipv4","ipv6"):
+        for family in ("ipv6_cf","ipv6_other"):
             _append_permanent_candidates(engines[family],quality)
             refreshed=await asyncio.to_thread(engines[family].refresh)
             log.info("%s post-cycle refresh: %s",family,refreshed)
