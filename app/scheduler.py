@@ -72,11 +72,27 @@ def _source_candidates(engine, quality, count):
     return result[:count]
 
 def _internet_ok():
-    for host in ("1.1.1.1","8.8.8.8"):
-        try:
-            with socket.create_connection((host,443),timeout=2.0): return True
-        except OSError: pass
-    return False
+    """Require at least two of three region-appropriate TCP/443 targets in two rounds."""
+    hosts=("www.baidu.com","www.microsoft.com","www.qq.com")
+    for round_no in (1,2):
+        successes=0
+        for host in hosts:
+            started=time.monotonic()
+            try:
+                with socket.create_connection((host,443),timeout=2.0):
+                    successes+=1
+                    log.info("WAN check round %d: %s:443 reachable (%.2fs)",
+                             round_no,host,time.monotonic()-started)
+            except OSError as exc:
+                log.warning("WAN check round %d: %s:443 failed after %.2fs: %s",
+                            round_no,host,time.monotonic()-started,exc)
+        log.info("WAN check round %d summary: %d/3 targets reachable",
+                 round_no,successes)
+        if successes<2:
+            return False
+        if round_no==1:
+            time.sleep(3)
+    return True
 
 def _parse_csv(path,family):
     with path.open("r",encoding="utf-8-sig",newline="") as f: rows=list(csv.reader(f))
