@@ -23,6 +23,5 @@ services:
     volumes:
       - ./data:/data
       - ./bin:/opt/ip-pool/bin:ro
-      - ./tmp:/tmp/cfst-test
     security_opt:
       - no-new-privileges:true
