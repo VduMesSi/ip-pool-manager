@@ -20,7 +20,7 @@ BATCH_SIZE=300
 CONCURRENCY=20
 PING_COUNT=4
 MAX_LATENCY=120
-BATCH_PAUSE_SECONDS=600
+BATCH_PAUSE_SECONDS=300
 CYCLE_LOCK=asyncio.Lock()
 
 def _read_source(path, version):
@@ -72,9 +72,9 @@ def _source_candidates(engine, quality, count):
     return result[:count]
 
 def _internet_ok():
-    """Require at least two of three region-appropriate TCP/443 targets in two rounds."""
+    """Pass on >=2/3 TCP/443 targets in round 1; otherwise retry up to two more rounds."""
     hosts=("www.baidu.com","www.microsoft.com","www.qq.com")
-    for round_no in (1,2):
+    for round_no in (1,2,3):
         successes=0
         for host in hosts:
             started=time.monotonic()
@@ -88,11 +88,15 @@ def _internet_ok():
                             round_no,host,time.monotonic()-started,exc)
         log.info("WAN check round %d summary: %d/3 targets reachable",
                  round_no,successes)
-        if successes<2:
-            return False
-        if round_no==1:
+        if successes>=2:
+            log.info("WAN check passed on round %d",round_no)
+            return True
+        if round_no<3:
+            log.warning("WAN check round %d did not meet 2/3; retrying in 3 seconds",
+                        round_no)
             time.sleep(3)
-    return True
+    log.error("WAN check failed: fewer than 2/3 targets reachable in all 3 rounds")
+    return False
 
 def _parse_csv(path,family):
     with path.open("r",encoding="utf-8-sig",newline="") as f: rows=list(csv.reader(f))
