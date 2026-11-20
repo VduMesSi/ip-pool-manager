@@ -4,7 +4,7 @@ NAS 端 IPv6 地址池管理服务。当前运行模式为两个完全隔离的 
 
 ## 双 IPv6 池
 
-每个池分别维护自己的 CIDR 来源、CFST 结果 CSV、动态池状态 JSON 和 SQLite 质量历史（以 family 字段隔离）。
+每个池分别维护自己的 CIDR 来源、CFST 结果 CSV、动态池状态 JSON 和独立 SQLite 质量/永久库文件。
 
 ```text
 /data/
@@ -16,10 +16,10 @@ NAS 端 IPv6 地址池管理服务。当前运行模式为两个完全隔离的 
     ipv6_other.txt
     result_ipv6_other.csv
     pool_state_ipv6_other.json
-  quality/ip_quality.sqlite3
+  quality/ipv6_cf.sqlite3\n  quality/ipv6_other.sqlite3
 ```
 
-请分别将适用于 CF1/CF2 和其他节点的 IPv6 CIDR 写入对应的 `ipv6_cf.txt`、`ipv6_other.txt`。两个来源文件不可混用。旧的 `/data/ipv6` 目录不会自动迁移或删除。
+首次启动会自动创建两个空来源文件。请分别将适用于 CF1/CF2 和其他节点的 IPv6 CIDR 写入对应的 `ipv6_cf.txt`、`ipv6_other.txt`。两个来源文件不可混用。未配置来源时不会启动扫描。旧的 `/data/ipv6` 目录不会自动迁移或删除。
 
 ## 扫描策略
 
@@ -29,7 +29,7 @@ NAS 端 IPv6 地址池管理服务。当前运行模式为两个完全隔离的 
 - 批次间隔 60 秒（当前测试配置）。
 - 每批开始前检查三个 TCP/443 目标，至少两个可达即通过；失败时最多重试三轮。
 - CFST 退出码为 0 且未生成 CSV，视为本批零合格地址：不报错、不清空已有结果、不写入伪造质量记录，扫描继续。
-- 每个地址族/用途使用同一 SQLite 文件中的独立 family 键；永久资格按连续 7 个自然日、每日平均延迟低于 80ms 且零丢包判断。
+- 两个池使用独立 SQLite 文件；永久资格按连续 7 个自然日、每日平均延迟低于 80ms 且零丢包判断。
 
 ## API
 
