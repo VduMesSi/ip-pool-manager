@@ -1,6 +1,6 @@
 services:
   ip-pool-manager:
-    image: ghcr.io/vdumessi/ip-pool-manager:latest
+    image: ghcr.nju.edu.cn/vdumessi/ip-pool-manager:latest
     container_name: ip-pool-manager
     restart: unless-stopped
     network_mode: host
