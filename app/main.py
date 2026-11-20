@@ -3,9 +3,9 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
-from .config import DATA_DIR, API_TOKEN, SCHEDULER_ENABLED, SCHEDULER_RUN_HOURS
+from .config import DATA_DIR, API_TOKEN, SCHEDULER_ENABLED
 from .engine import PoolEngine
-from .scheduler import start_scheduler, stop_scheduler
+from .scheduler import start_scheduler, stop_scheduler, run_full_cycle
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"),
                     format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -14,16 +14,11 @@ engines = {family: PoolEngine(family, DATA_DIR) for family in ("ipv4", "ipv6")}
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    tasks = []
-    if SCHEDULER_ENABLED:
-        logging.getLogger("ip-pool.scheduler").info(
-            "automatic scheduler enabled; allowed run times=%s; timezone=%s",
-            ", ".join(f"{hour:02d}:00" for hour in SCHEDULER_RUN_HOURS),
-            os.getenv("TZ", "system local time"),
-        )
-        tasks = start_scheduler(engines)
-    else:
-        logging.getLogger("ip-pool.scheduler").info("automatic scheduler disabled")
+    tasks = start_scheduler(engines) if SCHEDULER_ENABLED else []
+    logging.getLogger("ip-pool.scheduler").info(
+        "automatic scheduler %s; timezone=Asia/Taipei; allowed run times=07:30,13:30,19:30",
+        "enabled" if SCHEDULER_ENABLED else "disabled",
+    )
     try:
         yield
     finally:
@@ -31,7 +26,7 @@ async def lifespan(app: FastAPI):
             await stop_scheduler(tasks)
 
 
-app = FastAPI(title="NAS IP Pool Manager", version="0.2.0", lifespan=lifespan)
+app = FastAPI(title="NAS IP Pool Manager", version="0.4.0", lifespan=lifespan)
 
 
 def authorize(authorization: str | None):
@@ -51,9 +46,10 @@ def health():
     return {
         "ok": True,
         "service": "nas-ip-pool-manager",
+        "version": "0.4.0",
         "scheduler_enabled": SCHEDULER_ENABLED,
-        "scheduler_run_hours": list(SCHEDULER_RUN_HOURS),
-        "scheduler_timezone": os.getenv("TZ", "system-local"),
+        "scheduler_timezone": "Asia/Taipei",
+        "scheduler_run_times": ["07:30", "13:30", "19:30"],
     }
 
 
@@ -99,6 +95,15 @@ def scan_refresh(family: str, authorization: str | None = Header(default=None)):
     if not result.get("ok"):
         raise HTTPException(409, result)
     result["pool"] = engines[family].refresh()
+    return result
+
+
+@app.post("/api/v1/scan-cycle")
+async def scan_cycle(authorization: str | None = Header(default=None)):
+    authorize(authorization)
+    result = await run_full_cycle(engines)
+    if not result.get("ok"):
+        raise HTTPException(409, result)
     return result
 
 

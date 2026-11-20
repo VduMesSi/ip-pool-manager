@@ -4,7 +4,6 @@ services:
     container_name: ip-pool-manager
     restart: unless-stopped
     network_mode: host
-
     environment:
       TZ: Asia/Taipei
       DATA_DIR: /data
@@ -15,17 +14,15 @@ services:
       ADD_PER_REFRESH: "5"
       FRESH_TOP: "60"
       SAMPLE_RATIO: "0.5"
-      IPV6_SCAN_TARGET: "3000"
-      SCAN_TIMEOUT: "3600"
+      IPV6_SCAN_TARGET: "1500"
+      SCAN_TIMEOUT: "1800"
       COOLDOWN_MIN: "21600"
       COOLDOWN_MAX: "86400"
       BURN_SECONDS: "259200"
       SCHEDULER_ENABLED: "true"
-
     volumes:
       - ./data:/data
       - ./bin:/opt/ip-pool/bin:ro
       - ./tmp:/tmp/cfst-test
-
     security_opt:
       - no-new-privileges:true

@@ -1,109 +1,79 @@
 # NAS IP Pool Manager
 
-第一阶段：将 IPv4 / IPv6 IP 库和 IP 池优选服务迁移到 Docker。此阶段不启动 Xray、不执行 outbound 轮回，也不替换现有 Windows Manager。
+NAS 端 Cloudflare IP 池管理服务。CFST 负责 TCPing 延迟/丢包测试；本项目负责抽样、低并发分批、IPv4/IPv6 交替调度、质量历史、永久 IP 资格判定和动态池刷新。
 
-## GitHub 镜像构建
+## 扫描策略（0.4.0）
 
-本仓库使用 GitHub Actions 自动构建并发布 GHCR 镜像：
+- 每轮 IPv4 + IPv6 合计最多 3000 个地址，默认两种协议各 1500 个。
+- 每批最多 300 个地址，IPv4/IPv6 交替执行，默认 10 批。
+- CFST 并发固定为 20，单地址 TCPing 4 次；使用 `-dd` 禁止大批量下载测速。
+- 每批完成后等待 10 分钟再启动下一批；前一轮未结束时不叠加新轮次。
+- 自动调度：Asia/Taipei 每日 07:30、13:30、19:30。
+- 每批前后检查 NAS 外网 TCP 443 连通性；检测失败即停止本轮剩余批次。
+- CFST 测试结果写入每日质量历史。IP 连续 7 个自然日每天至少有一次有效记录、当日平均延迟严格低于 80ms、且记录的最大丢包率为 0，才取得永久库资格。
+- 永久库保留历史记录；资格暂时失效只标记为 historical，不删除 IP 历史。
+- 每轮结束后把永久库有效地址并入原 CFST 结果，再调用既有动态池 refresh 逻辑。
 
-`ghcr.io/vdumessi/ip-pool-manager:latest`
+注意：这里的延迟是 CFST TCP connect latency，不是 ICMP ping。每日三轮扫描只会更新同一个自然日的统计，不会算成三天。永久库的 7 天资格需要连续自然日数据；缺测一天即不满足连续资格。
 
-触发方式：
-- 推送到 `main`：构建并更新 `latest`。
-- 推送 `v*` 标签（例如 `v0.1.0`）：额外发布对应版本标签。
-- Actions 页面手动运行：`workflow_dispatch`。
+## 部署
 
-仓库需要启用 Actions。工作流通过 GitHub 自动提供的 `GITHUB_TOKEN` 发布包，不需要另建 PAT。首次发布后，如需 NAS 匿名拉取，请在 GitHub Packages 的 Package settings 中将包可见性设为 Public。
-
-## NAS 目录
-
-建议在 QNAP 建立：
+NAS 目录建议：
 
 ```text
-/share/CACHEDEV1_DATA/Container/ip-pool/
+ip-pool/
 ├── docker-compose.yml
 ├── .env
-├── bin/
-│   └── CloudflareST
+├── bin/CloudflareST
 └── data/
-    ├── ipv4/
-    │   └── ipv4.txt
-    ├── ipv6/
-    │   └── ipv6.txt
-    └── logs/
+    ├── ipv4/ipv4.txt
+    ├── ipv6/ipv6.txt
+    ├── ipv4/pool_state_ipv4.json
+    ├── ipv6/pool_state_ipv6.json
+    └── quality/ip_quality.sqlite3
 ```
 
-`bin/CloudflareST` 必须是与 NAS CPU 架构匹配的 Linux 可执行文件。先在 NAS 执行 `uname -m` 确认架构。本工作流当前构建 `linux/amd64` 镜像，适用于 x86_64/amd64 NAS。
+CFST 可执行文件必须是与 NAS 架构匹配的 Linux 版本，并放在 `bin/CloudflareST`。源文件每行可以是 IP 或 CIDR；程序按地址族校验并抽样。建议先确认实际 CFST 版本支持输入文件中的单个 IPv4/IPv6 地址行。
 
-## 首次部署
+首次部署：
 
-1. 将 `docker-compose.yml` 放入上述目录。
-2. 建立 `bin/`、`data/ipv4/`、`data/ipv6/`、`data/logs/`。
-3. 将匹配架构的 CFST 程序放入 `bin/CloudflareST`，并确保可执行权限。
-4. 将 IPv4 源文件放入 `data/ipv4/ipv4.txt`，IPv6 源文件放入 `data/ipv6/ipv6.txt`。
-5. 从 `.env.example` 复制生成 `.env`，设置至少 32 字符的随机 `IP_POOL_API_TOKEN`。
-6. 检查 `docker-compose.yml` 中的 NAS IP `192.168.2.222` 是否正确。
-7. 执行：
+```bash
+cp .env.example .env
+# 设置 IP_POOL_API_TOKEN
+docker compose pull
+docker compose up -d
+```
+
+更新：
 
 ```bash
 docker compose pull
 docker compose up -d
 ```
 
-查看状态：
-
-```bash
-docker compose ps
-docker compose logs --tail=100 -f
-```
-
-## 更新镜像
-
-```bash
-docker compose pull
-docker compose up -d
-```
-
-IP 库、测速结果和池状态都保存在 NAS 的 `data/` 目录，不会随镜像更新而删除。
+数据均保存在挂载的 `data/` 中，更新镜像不会清除。
 
 ## API
 
-所有 `/api/v1/` 接口需要请求头：
-
-`Authorization: Bearer <IP_POOL_API_TOKEN>`
+所有 `/api/v1/` 接口需要请求头 `Authorization: Bearer <IP_POOL_API_TOKEN>`。
 
 - `GET /health`
 - `GET /api/v1/status`
 - `GET /api/v1/ipv4/pool`
 - `GET /api/v1/ipv6/pool`
-- `POST /api/v1/ipv4/scan`
-- `POST /api/v1/ipv6/scan`
-- `POST /api/v1/ipv4/refresh`
-- `POST /api/v1/ipv6/refresh`
-- `POST /api/v1/ipv4/scan-refresh`
-- `POST /api/v1/ipv6/scan-refresh`
+- `POST /api/v1/scan-cycle`：手动触发完整分批轮次（耗时较长）
+- 原有 `POST /api/v1/{family}/scan`、`refresh`、`scan-refresh`、`result` 接口保留。
 
 示例：
 
 ```bash
-curl -H "Authorization: Bearer YOUR_TOKEN" \
-  http://192.168.2.222:8088/api/v1/status
+curl -H "Authorization: Bearer YOUR_TOKEN" http://192.168.2.222:8088/health
 ```
 
-## 持久化文件
+## 重要运行说明
 
-- `data/ipv4/ipv4.txt`
-- `data/ipv4/result_ipv4.csv`
-- `data/ipv4/pool_state_ipv4.json`
-- `data/ipv6/ipv6.txt`
-- `data/ipv6/result_ipv6.csv`
-- `data/ipv6/pool_state_ipv6.json`
-
-## 当前版本限制与验证事项
-
-- 这是原 v0.1 代码的 GHCR 部署整理版，不代表已经完成 NAS 实机验证。
-- CFST 命令行参数、实际输出文件名及 CSV 第 5 列延迟字段，仍需用你实际使用的 Linux CFST 版本验证。
-- 目前是手动 API 触发扫描/刷新，没有后台定时任务。
-- 尚未实现 Windows GUI、Xray 配置应用、outbound 分配及轮回调度。
-- `/api/v1/{family}/result` 是预留的结果回传接口；当前阶段没有 Xray 实际代理验证端。
-- 不要将 API 端口直接暴露到公网。
+- `POST /api/v1/scan-cycle` 是同步等待完整轮次的接口，建议仅用于手动测试；正常使用由每日调度器执行。
+- 批次按上一批完成后等待 10 分钟，因此整轮耗时会明显超过 90 分钟（还需加上每批测速时间）。
+- 外网保护使用两个公共 IPv4 地址的 TCP 443 连通性检查。它能检测部分断网情形，但不能保证识别路由器所有异常，也不能替代路由器 CPU、conntrack 和 WAN 状态监控。
+- 动态池状态文件与 SQLite 质量库相互独立。请定期备份整个 `data/` 目录。
+- 当前流程只做 TCPing 延迟/丢包，不对 3000 个地址进行下载测速。下载测速可在候选缩小后另行执行。
