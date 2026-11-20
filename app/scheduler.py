@@ -175,7 +175,6 @@ async def run_full_cycle(engines):
         for i in range(max(len(queues["ipv4"]),len(queues["ipv6"]))):
             for family in ("ipv4","ipv6"):
                 if i<len(queues[family]): schedule.append((family,queues[family][i]))
-        schedule=schedule[:10]
         if not schedule: return {"ok":False,"reason":"no_scan_targets"}
         total=sum(len(batch) for _,batch in schedule)
         log.info("scan cycle started: total=%d ipv4=%d ipv6=%d batches=%d",
