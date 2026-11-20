@@ -1,79 +1,46 @@
 # NAS IP Pool Manager
 
-NAS 端 Cloudflare IP 池管理服务。CFST 负责 TCPing 延迟/丢包测试；本项目负责抽样、低并发分批、IPv4/IPv6 交替调度、质量历史、永久 IP 资格判定和动态池刷新。
+NAS 端 IPv6 地址池管理服务。当前运行模式为两个完全隔离的 IPv6 池：CF1/CF2 专用池（`ipv6_cf`）与其他节点专用池（`ipv6_other`）。IPv4 不再参与自动扫描调度；原 IPv4 数据目录保留，不删除。
 
-## 扫描策略（0.4.0）
+## 双 IPv6 池
 
-- 每轮 IPv4 + IPv6 合计最多 3000 个地址，默认两种协议各 1500 个。
-- 每批最多 300 个地址，IPv4/IPv6 交替执行；两类地址各 1500 个时通常为 10 批，数量不足时按可用地址动态调整批次数。
-- CFST 并发固定为 20，单地址 TCPing 4 次；使用 `-dd` 禁止大批量下载测速。
-- 每批完成后等待 5 分钟再启动下一批；前一轮未结束时不叠加新轮次。
-- 自动调度：Asia/Taipei 每日 07:30、13:30、19:30。
-- 每批开始前检查 NAS 外网 TCP 443 连通性；百度、微软、腾讯三个目标中至少两个可达即通过，失败时每隔 3 秒重试，最多三轮。
-- CFST 测试结果写入每日质量历史。IP 连续 7 个自然日每天至少有一次有效记录、当日平均延迟严格低于 80ms、且记录的最大丢包率为 0，才取得永久库资格。
-- 永久库保留历史记录；资格暂时失效只标记为 historical，不删除 IP 历史。
-- 每轮结束后把永久库有效地址并入原 CFST 结果，再调用既有动态池 refresh 逻辑。
-
-注意：这里的延迟是 CFST TCP connect latency，不是 ICMP ping。每日三轮扫描只会更新同一个自然日的统计，不会算成三天。永久库的 7 天资格需要连续自然日数据；缺测一天即不满足连续资格。
-
-## 部署
-
-NAS 目录建议：
+每个池分别维护自己的 CIDR 来源、CFST 结果 CSV、动态池状态 JSON 和 SQLite 质量历史（以 family 字段隔离）。
 
 ```text
-ip-pool/
-├── docker-compose.yml
-├── .env
-├── bin/CloudflareST
-└── data/
-    ├── ipv4/ipv4.txt
-    ├── ipv6/ipv6.txt
-    ├── ipv4/pool_state_ipv4.json
-    ├── ipv6/pool_state_ipv6.json
-    └── quality/ip_quality.sqlite3
+/data/
+  ipv6_cf/
+    ipv6_cf.txt
+    result_ipv6_cf.csv
+    pool_state_ipv6_cf.json
+  ipv6_other/
+    ipv6_other.txt
+    result_ipv6_other.csv
+    pool_state_ipv6_other.json
+  quality/ip_quality.sqlite3
 ```
 
-CFST 可执行文件必须是与 NAS 架构匹配的 Linux 版本，并放在 `bin/CloudflareST`。源文件每行可以是 IP 或 CIDR；程序按地址族校验并抽样。建议先确认实际 CFST 版本支持输入文件中的单个 IPv4/IPv6 地址行。
+请分别将适用于 CF1/CF2 和其他节点的 IPv6 CIDR 写入对应的 `ipv6_cf.txt`、`ipv6_other.txt`。两个来源文件不可混用。旧的 `/data/ipv6` 目录不会自动迁移或删除。
 
-首次部署：
+## 扫描策略
 
-```bash
-cp .env.example .env
-# 设置 IP_POOL_API_TOKEN
-docker compose pull
-docker compose up -d
-```
-
-更新：
-
-```bash
-docker compose pull
-docker compose up -d
-```
-
-数据均保存在挂载的 `data/` 中，更新镜像不会清除。
+- 每轮最多扫描 3000 个 IPv6 地址，两个池各分配最多 1500 个；若其中一个池地址不足，另一池可补足总量上限。
+- 每批最多 300 个地址，两个池交替执行。
+- CFST 并发 20，TCPing 4 次，延迟上限 120ms，零丢包过滤，不执行下载测速。
+- 批次间隔 60 秒（当前测试配置）。
+- 每批开始前检查三个 TCP/443 目标，至少两个可达即通过；失败时最多重试三轮。
+- CFST 退出码为 0 且未生成 CSV，视为本批零合格地址：不报错、不清空已有结果、不写入伪造质量记录，扫描继续。
+- 每个地址族/用途使用同一 SQLite 文件中的独立 family 键；永久资格按连续 7 个自然日、每日平均延迟低于 80ms 且零丢包判断。
 
 ## API
 
-所有 `/api/v1/` 接口需要请求头 `Authorization: Bearer <IP_POOL_API_TOKEN>`。
+所有 `/api/v1/` 接口需要 `Authorization: Bearer <IP_POOL_API_TOKEN>`。
 
-- `GET /health`
 - `GET /api/v1/status`
-- `GET /api/v1/ipv4/pool`
-- `GET /api/v1/ipv6/pool`
-- `POST /api/v1/scan-cycle`：手动触发完整分批轮次（耗时较长）
-- 原有 `POST /api/v1/{family}/scan`、`refresh`、`scan-refresh`、`result` 接口保留。
+- `GET /api/v1/ipv6_cf/pool`、`GET /api/v1/ipv6_other/pool`
+- `POST /api/v1/scan-cycle`
+- 两个池均支持原有的 `/{family}/scan`、`refresh`、`scan-refresh`、`result` 接口。
+- 为兼容旧客户端，`/api/v1/ipv6/pool` 及旧 IPv6 操作路径映射到 CF1/CF2 池。
 
-示例：
+## 部署
 
-```bash
-curl -H "Authorization: Bearer YOUR_TOKEN" http://192.168.2.222:8080/health
-```
-
-## 重要运行说明
-
-- `POST /api/v1/scan-cycle` 是同步等待完整轮次的接口，建议仅用于手动测试；正常使用由每日调度器执行。
-- 批次按上一批完成后等待 5 分钟；10 批时，批次间固定等待合计约 45 分钟，另加测速时间。
-- 外网保护通过三个域名的 TCP 443 连通性检查。它能检测部分断网情形，但不能保证识别路由器所有异常，也不能替代路由器 CPU、conntrack 和 WAN 状态监控。
-- 动态池状态文件与 SQLite 质量库相互独立。请定期备份整个 `data/` 目录。
-- 当前流程只做 TCPing 延迟/丢包，不对 3000 个地址进行下载测速。下载测速可在候选缩小后另行执行。
+保留 NAS 上现有 `data/` 和 `bin/` 挂载。先备份 `data/`，创建两个来源文件并填入各自 CIDR，再拉取新镜像。不要删除旧的 IPv4/IPv6 目录。
