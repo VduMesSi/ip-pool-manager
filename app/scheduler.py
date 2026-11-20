@@ -209,14 +209,16 @@ async def run_full_cycle(engines):
     if CYCLE_LOCK.locked(): return {"ok":False,"reason":"cycle_already_running"}
     async with CYCLE_LOCK:
         started=time.monotonic()
-        quality=QualityStore(DATA_DIR/"quality"/"ip_quality.sqlite3")
+        qualities={f:QualityStore(DATA_DIR/"quality"/f"{f}.sqlite3")
+                   for f in ("ipv6_cf","ipv6_other")}
         day=datetime.now(TZ).date()
-        candidates={f:_source_candidates(engines[f],quality,TOTAL_TARGET//2) for f in ("ipv6_cf","ipv6_other")}
+        candidates={f:_source_candidates(engines[f],qualities[f],TOTAL_TARGET//2)
+                    for f in ("ipv6_cf","ipv6_other")}
         # Reallocate a shortfall to the other family while keeping the combined cap.
         for family in ("ipv6_cf","ipv6_other"):
             if sum(map(len,candidates.values()))>=TOTAL_TARGET: break
             need=TOTAL_TARGET-sum(map(len,candidates.values()))
-            more=_source_candidates(engines[family],quality,len(candidates[family])+need)
+            more=_source_candidates(engines[family],qualities[family],len(candidates[family])+need)
             seen=set(candidates[family])
             candidates[family].extend(ip for ip in more if ip not in seen)
             candidates[family]=candidates[family][:TOTAL_TARGET-sum(
@@ -236,7 +238,7 @@ async def run_full_cycle(engines):
                 log.error("cycle aborted before batch %d: WAN check failed",index)
                 return {"ok":False,"reason":"outbound_connectivity_lost","completed_batches":completed}
             try:
-                count=await asyncio.to_thread(_run_batch,engines[family],ips,index,quality,day)
+                count=await asyncio.to_thread(_run_batch,engines[family],ips,index,qualities[family],day)
             except Exception as exc:
                 log.exception(
                     "cycle stopped: %s batch %d failed; completed_batches=%d",
@@ -253,7 +255,7 @@ async def run_full_cycle(engines):
             completed.append({"family":family,"targets":len(ips),"results":count})
             if index<len(schedule): await asyncio.sleep(BATCH_PAUSE_SECONDS)
         for family in ("ipv6_cf","ipv6_other"):
-            _append_permanent_candidates(engines[family],quality)
+            _append_permanent_candidates(engines[family],qualities[family])
             refreshed=await asyncio.to_thread(engines[family].refresh)
             log.info("%s post-cycle refresh: %s",family,refreshed)
         return {"ok":True,"batches":completed,"total_targets":total,
