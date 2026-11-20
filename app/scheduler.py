@@ -109,7 +109,10 @@ def _parse_csv(path,family):
             addr=ipaddress.ip_address(row[0].strip())
             if addr.version!=(4 if family=="ipv4" else 6): continue
             latency=float(row[4]); loss=float(row[3].strip().rstrip("%") or 0)
-            if 0<latency<=60000: out[str(addr)]=(latency,loss)
+            if 0<latency<=60000:
+                key=str(addr)
+                if key not in out or latency<out[key][0]:
+                    out[key]=(latency,loss,row)
         except (ValueError,TypeError): continue
     return rows[0],out
 
@@ -132,13 +135,21 @@ def _run_batch(engine,ips,batch_no,quality,day):
             raise RuntimeError(f"CFST failed rc={proc.returncode}: {proc.stderr.decode('utf-8','replace')[-1000:]}")
         if not output_path.is_file(): raise RuntimeError("CFST output file missing")
         header,results=_parse_csv(output_path,engine.family)
-        for ip,(lat,loss) in results.items(): quality.record(ip,engine.family,day,lat,loss)
-        existing=dict(engine._read_candidates())
-        for ip,(lat,_) in results.items(): existing[ip]=min(lat,existing.get(ip,float("inf")))
+        for ip,(lat,loss,_) in results.items():
+            quality.record(ip,engine.family,day,lat,loss)
+        existing={}
+        if engine.result.is_file():
+            try:
+                _,existing=_parse_csv(engine.result,engine.family)
+            except (OSError,RuntimeError):
+                log.exception("could not read previous %s result CSV; retaining current batch only",engine.family)
+        for ip,item in results.items():
+            if ip not in existing or item[0]<existing[ip][0]:
+                existing[ip]=item
         with engine.result.open("w",encoding="utf-8-sig",newline="") as f:
             writer=csv.writer(f); writer.writerow(header)
-            for ip,lat in sorted(existing.items(),key=lambda x:x[1]):
-                writer.writerow([ip,4,4,"0.00",f"{lat:.2f}","0.00","N/A"])
+            for ip,(_,_,row) in sorted(existing.items(),key=lambda x:x[1][0]):
+                writer.writerow(row)
         log.info("%s batch %d: targets=%d results=%d duration=%.1fs",
                  engine.family,batch_no,len(ips),len(results),time.monotonic()-started)
         return len(results)
@@ -146,13 +157,20 @@ def _run_batch(engine,ips,batch_no,quality,day):
         engine.scan_lock.release()
 
 def _append_permanent_candidates(engine,quality):
-    existing=dict(engine._read_candidates())
-    for ip,lat in quality.active(engine.family): existing[ip]=lat
+    header=["IP 地址","已发送","已接收","丢包率","平均延迟","下载速度(MB/s)","地区码"]
+    existing={}
+    if engine.result.is_file():
+        try:
+            header,existing=_parse_csv(engine.result,engine.family)
+        except (OSError,RuntimeError):
+            log.exception("could not read %s result CSV while appending permanent candidates",engine.family)
+    for ip,lat in quality.active(engine.family):
+        if ip not in existing:
+            existing[ip]=(lat,0.0,[ip,"","","",f"{lat:.2f}","",""])
     with engine.result.open("w",encoding="utf-8-sig",newline="") as f:
-        writer=csv.writer(f)
-        writer.writerow(["IP 地址","已发送","已接收","丢包率","平均延迟","下载速度(MB/s)","地区码"])
-        for ip,lat in sorted(existing.items(),key=lambda x:x[1]):
-            writer.writerow([ip,4,4,"0.00",f"{lat:.2f}","0.00","N/A"])
+        writer=csv.writer(f); writer.writerow(header)
+        for ip,(_,_,row) in sorted(existing.items(),key=lambda x:x[1][0]):
+            writer.writerow(row)
 
 async def run_full_cycle(engines):
     if CYCLE_LOCK.locked(): return {"ok":False,"reason":"cycle_already_running"}

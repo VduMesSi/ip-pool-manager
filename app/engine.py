@@ -244,10 +244,6 @@ class PoolEngine:
         finally:
             self.scan_lock.release()
 
-    def _assigned(self):
-        # Pool-only stage has no outbound slot assignments yet.
-        return set()
-
     def refresh(self):
         candidates = self._read_candidates()
         if not candidates:
@@ -300,8 +296,7 @@ class PoolEngine:
             active_ips = [ip for ip, m in pool.items() if float(m.get("cool_until", 0)) <= now]
             overflow = len(active_ips) + len(accepted) - POOL_MAX
             if overflow > 0:
-                assigned = self._assigned()
-                evictable = [ip for ip in active_ips if ip not in assigned]
+                evictable = active_ips
                 evict = sorted(evictable, key=lambda ip: ip_weight(pool[ip]))[:overflow]
                 for ip in evict:
                     del pool[ip]

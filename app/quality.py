@@ -1,7 +1,8 @@
 import ipaddress
 import sqlite3
 import threading
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 from pathlib import Path
 
 class QualityStore:
@@ -78,15 +79,23 @@ class QualityStore:
             # Preserve the record and history; only mark it historical, never delete it.
             db.execute("UPDATE permanent_ips SET status='historical' WHERE ip=? AND family=?",(ip,family))
     def active(self, family):
-        with self._connect() as db:
+        # Keep a qualification current through the day after its last qualifying
+        # scan; a missed full calendar day makes the address historical.
+        cutoff=(datetime.now(ZoneInfo("Asia/Taipei")).date()-timedelta(days=1)).isoformat()
+        with self.lock, self._connect() as db:
+            db.execute("""
+              UPDATE permanent_ips SET status='historical'
+              WHERE family=? AND status='active' AND last_qualified_day<?
+            """,(family,cutoff))
             rows=db.execute("""
               SELECT p.ip, q.latency_sum/q.samples AS latency
               FROM permanent_ips p
               JOIN ip_daily_quality q ON q.ip=p.ip AND q.family=p.family
                 AND q.day=p.last_qualified_day
               WHERE p.family=? AND p.status='active'
+                AND p.last_qualified_day>=?
               ORDER BY latency ASC
-            """,(family,)).fetchall()
+            """,(family,cutoff)).fetchall()
             return [(r["ip"],float(r["latency"])) for r in rows]
     def known(self, family):
         with self._connect() as db:

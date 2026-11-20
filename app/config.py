@@ -17,6 +17,5 @@ IPV6_SCAN_TARGET = int(os.getenv("IPV6_SCAN_TARGET", "1500"))
 COOLDOWN_MIN = int(os.getenv("COOLDOWN_MIN", str(6 * 3600)))
 COOLDOWN_MAX = int(os.getenv("COOLDOWN_MAX", str(24 * 3600)))
 BURN_SECONDS = int(os.getenv("BURN_SECONDS", str(3 * 86400)))
-PRECHECK_TRIES = int(os.getenv("PRECHECK_TRIES", "5"))
 
 SCHEDULER_ENABLED = os.getenv("SCHEDULER_ENABLED", "true").strip().lower() in ("1", "true", "yes", "on")
