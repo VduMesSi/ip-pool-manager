@@ -9,14 +9,7 @@ from .scheduler import start_scheduler, stop_scheduler, run_full_cycle
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"),
                     format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-engines = {family: PoolEngine(family, DATA_DIR) for family in ("ipv6_cf", "ipv6_other")}
-
-
-def resolve_family(family: str):
-    # Backward compatibility: historical IPv6 endpoints map to CF1/CF2 pool.
-    if family == "ipv6":
-        return "ipv6_cf"
-    return family
+engines = {family: PoolEngine(family, DATA_DIR) for family in ("ipv60", "ipv6")}
 
 
 @asynccontextmanager
@@ -64,13 +57,12 @@ def health():
 def status(authorization: str | None = Header(default=None)):
     authorize(authorization)
     return {**{family: engine.status() for family, engine in engines.items()},
-            "ipv6": engines["ipv6_cf"].status()}
+            }
 
 
 @app.get("/api/v1/{family}/pool")
 def pool(family: str, authorization: str | None = Header(default=None)):
     authorize(authorization)
-    family = resolve_family(family)
     if family not in engines:
         raise HTTPException(404, "unknown family")
     return engines[family].status()
@@ -79,7 +71,6 @@ def pool(family: str, authorization: str | None = Header(default=None)):
 @app.post("/api/v1/{family}/scan")
 def scan(family: str, authorization: str | None = Header(default=None)):
     authorize(authorization)
-    family = resolve_family(family)
     if family not in engines:
         raise HTTPException(404, "unknown family")
     result = engines[family].run_scan()
@@ -91,7 +82,6 @@ def scan(family: str, authorization: str | None = Header(default=None)):
 @app.post("/api/v1/{family}/refresh")
 def refresh(family: str, authorization: str | None = Header(default=None)):
     authorize(authorization)
-    family = resolve_family(family)
     if family not in engines:
         raise HTTPException(404, "unknown family")
     return engines[family].refresh()
@@ -100,7 +90,6 @@ def refresh(family: str, authorization: str | None = Header(default=None)):
 @app.post("/api/v1/{family}/scan-refresh")
 def scan_refresh(family: str, authorization: str | None = Header(default=None)):
     authorize(authorization)
-    family = resolve_family(family)
     if family not in engines:
         raise HTTPException(404, "unknown family")
     result = engines[family].run_scan()
@@ -123,7 +112,6 @@ async def scan_cycle(authorization: str | None = Header(default=None)):
 def mark_result(family: str, payload: ResultInput,
                 authorization: str | None = Header(default=None)):
     authorize(authorization)
-    family = resolve_family(family)
     if family not in engines:
         raise HTTPException(404, "unknown family")
     try:
