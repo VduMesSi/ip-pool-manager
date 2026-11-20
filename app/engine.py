@@ -272,9 +272,16 @@ class PoolEngine:
 
             active = sum(1 for m in pool.values() if float(m.get("cool_until", 0)) <= now)
             want = ADD_PER_REFRESH if active >= POOL_MIN else max(POOL_MAX - active, 0)
+            # Prefer addresses that have earned seven-day permanent qualification.
+            try:
+                from .quality import QualityStore
+                permanent = dict(QualityStore(self.base.parent / "quality" / "ip_quality.sqlite3").active(self.family))
+            except Exception:
+                log.exception("could not read permanent IP quality database")
+                permanent = {}
             fresh = sorted(
                 [(ip, lat) for ip, lat in candidates if ip not in pool and ip not in burned],
-                key=lambda x: x[1]
+                key=lambda x: (0 if x[0] in permanent else 1, permanent.get(x[0], x[1]), x[1])
             )[:FRESH_TOP]
 
         random.shuffle(fresh)
