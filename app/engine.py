@@ -13,8 +13,6 @@ from .store import JsonStore
 log = logging.getLogger("ip-pool")
 
 FAMILIES = {
-    "ipv4": {"source": "ipv4.txt", "result": "result_ipv4.csv", "state": "pool_state_ipv4.json"},
-    "ipv6": {"source": "ipv6.txt", "result": "result_ipv6.csv", "state": "pool_state_ipv6.json"},
     "ipv60": {"source": "ipv60.txt", "result": "result_ipv60.csv", "state": "pool_state_ipv60.json"},
     "ipv6": {"source": "ipv6.txt", "result": "result_ipv6.csv", "state": "pool_state_ipv6.json"},
 }
