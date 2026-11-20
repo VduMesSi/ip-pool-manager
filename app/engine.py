@@ -50,6 +50,7 @@ class PoolEngine:
         self.base = data_dir / family
         self.base.mkdir(parents=True, exist_ok=True)
         self.source = self.base / self.paths["source"]
+        self.source.touch(exist_ok=True)
         self.result = self.base / self.paths["result"]
         self.store = JsonStore(self.base / self.paths["state"])
         self.lock = threading.RLock()
@@ -273,7 +274,7 @@ class PoolEngine:
             # Prefer addresses that have earned seven-day permanent qualification.
             try:
                 from .quality import QualityStore
-                permanent = dict(QualityStore(self.base.parent / "quality" / "ip_quality.sqlite3").active(self.family))
+                permanent = dict(QualityStore(self.base.parent / "quality" / f"{self.family}.sqlite3").active(self.family))
             except Exception:
                 log.exception("could not read permanent IP quality database")
                 permanent = {}
