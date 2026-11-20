@@ -15,8 +15,8 @@ log = logging.getLogger("ip-pool")
 FAMILIES = {
     "ipv4": {"source": "ipv4.txt", "result": "result_ipv4.csv", "state": "pool_state_ipv4.json"},
     "ipv6": {"source": "ipv6.txt", "result": "result_ipv6.csv", "state": "pool_state_ipv6.json"},
-    "ipv6_cf": {"source": "ipv6_cf.txt", "result": "result_ipv6_cf.csv", "state": "pool_state_ipv6_cf.json"},
-    "ipv6_other": {"source": "ipv6_other.txt", "result": "result_ipv6_other.csv", "state": "pool_state_ipv6_other.json"},
+    "ipv60": {"source": "ipv60.txt", "result": "result_ipv60.csv", "state": "pool_state_ipv60.json"},
+    "ipv6": {"source": "ipv6.txt", "result": "result_ipv6.csv", "state": "pool_state_ipv6.json"},
 }
 
 def valid_ip(value, version):
@@ -157,7 +157,7 @@ class PoolEngine:
             if len(lines) < 2:
                 return {"ok": False, "reason": "source file has fewer than 2 valid entries"}
 
-            if self.family == "ipv6":
+            if self.version == 6:
                 # Sample individual addresses uniformly from the union of all source CIDRs.
                 # Collapse overlapping/adjacent networks first to avoid duplicate weighting.
                 networks = [ipaddress.ip_network(value) for value in lines]
