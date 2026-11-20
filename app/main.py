@@ -9,7 +9,13 @@ from .scheduler import start_scheduler, stop_scheduler, run_full_cycle
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"),
                     format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-engines = {family: PoolEngine(family, DATA_DIR) for family in ("ipv4", "ipv6")}
+engines = {family: PoolEngine(family, DATA_DIR) for family in ("ipv6_cf", "ipv6_other")}
+
+def resolve_family(family: str):
+    # Backward compatibility: the historical /ipv6 API maps to the CF1/CF2 pool.
+    if family == "ipv6":
+        return "ipv6_cf"
+    return family
 
 
 @asynccontextmanager
@@ -56,12 +62,18 @@ def health():
 @app.get("/api/v1/status")
 def status(authorization: str | None = Header(default=None)):
     authorize(authorization)
-    return {family: engine.status() for family, engine in engines.items()}
+    return {**{family: engine.status() for family, engine in engines.items()},
+            "ipv6": engines["ipv6_cf"].status()}
 
 
 @app.get("/api/v1/{family}/pool")
 def pool(family: str, authorization: str | None = Header(default=None)):
     authorize(authorization)
+    family = resolve_family(family)
+    family = resolve_family(family)
+    family = resolve_family(family)
+    family = resolve_family(family)
+    family = resolve_family(family)
     if family not in engines:
         raise HTTPException(404, "unknown family")
     return engines[family].status()
