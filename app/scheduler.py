@@ -143,8 +143,27 @@ def _run_batch(engine,ips,batch_no,quality,day):
         started=time.monotonic()
         proc=subprocess.run(cmd,cwd=str(base),capture_output=True,timeout=SCAN_TIMEOUT,check=False)
         if proc.returncode!=0:
-            raise RuntimeError(f"CFST failed rc={proc.returncode}: {proc.stderr.decode('utf-8','replace')[-1000:]}")
-        if not output_path.is_file(): raise RuntimeError("CFST output file missing")
+            stdout=proc.stdout.decode("utf-8","replace")[-2000:]
+            stderr=proc.stderr.decode("utf-8","replace")[-2000:]
+            log.error(
+                "CFST failed: family=%s batch=%d rc=%d cwd=%s input=%s output=%s stdout=%r stderr=%r",
+                engine.family,batch_no,proc.returncode,base,input_path,output_path,stdout,stderr,
+            )
+            raise RuntimeError(f"CFST failed rc={proc.returncode}")
+        if not output_path.is_file():
+            stdout=proc.stdout.decode("utf-8","replace")[-4000:]
+            stderr=proc.stderr.decode("utf-8","replace")[-4000:]
+            input_exists=input_path.is_file()
+            input_size=input_path.stat().st_size if input_exists else None
+            log.error(
+                "CFST output missing: family=%s batch=%d rc=%d cwd=%s input=%s "
+                "input_exists=%s input_bytes=%s output=%s stdout=%r stderr=%r",
+                engine.family,batch_no,proc.returncode,base,input_path,
+                input_exists,input_size,output_path,stdout,stderr,
+            )
+            raise RuntimeError(
+                f"CFST output CSV missing (rc={proc.returncode}, output={output_path})"
+            )
         header,results=_parse_csv(output_path,engine.family)
         for ip,(lat,loss,_) in results.items():
             quality.record(ip,engine.family,day,lat,loss)
@@ -209,7 +228,21 @@ async def run_full_cycle(engines):
             if not _internet_ok():
                 log.error("cycle aborted before batch %d: WAN check failed",index)
                 return {"ok":False,"reason":"outbound_connectivity_lost","completed_batches":completed}
-            count=await asyncio.to_thread(_run_batch,engines[family],ips,index,quality,day)
+            try:
+                count=await asyncio.to_thread(_run_batch,engines[family],ips,index,quality,day)
+            except Exception as exc:
+                log.exception(
+                    "cycle stopped: %s batch %d failed; completed_batches=%d",
+                    family,index,len(completed),
+                )
+                return {
+                    "ok":False,
+                    "reason":"batch_failed",
+                    "family":family,
+                    "failed_batch":index,
+                    "detail":str(exc),
+                    "completed_batches":completed,
+                }
             completed.append({"family":family,"targets":len(ips),"results":count})
             if index<len(schedule): await asyncio.sleep(BATCH_PAUSE_SECONDS)
         for family in ("ipv4","ipv6"):
