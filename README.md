@@ -1,6 +1,6 @@
 # NAS IP Pool Manager
 
-NAS 端 IPv6 地址池管理服务。当前运行模式为两个完全隔离的 IPv6 池：CF1/CF2 专用池（`ipv6_cf`）与其他节点专用池（`ipv6_other`）。IPv4 不再参与自动扫描调度；原 IPv4 数据目录保留，不删除。
+NAS 端 IPv6 地址池管理服务。当前运行模式为两个完全隔离的 IPv6 池：CF1/CF2 专用池（`ipv60`）与其他节点专用池（`ipv6`）。IPv4 不再参与自动扫描调度；原 IPv4 数据目录保留，不删除。
 
 ## 双 IPv6 池
 
@@ -8,18 +8,19 @@ NAS 端 IPv6 地址池管理服务。当前运行模式为两个完全隔离的 
 
 ```text
 /data/
-  ipv6_cf/
-    ipv6_cf.txt
-    result_ipv6_cf.csv
-    pool_state_ipv6_cf.json
-  ipv6_other/
-    ipv6_other.txt
-    result_ipv6_other.csv
-    pool_state_ipv6_other.json
-  quality/ipv6_cf.sqlite3\n  quality/ipv6_other.sqlite3
+  ipv60/
+    ipv60.txt
+    result_ipv60.csv
+    pool_state_ipv60.json
+  ipv6/
+    ipv6.txt
+    result_ipv6.csv
+    pool_state_ipv6.json
+  quality/ipv60.sqlite3
+  quality/ipv6.sqlite3
 ```
 
-首次启动会自动创建两个空来源文件。请分别将适用于 CF1/CF2 和其他节点的 IPv6 CIDR 写入对应的 `ipv6_cf.txt`、`ipv6_other.txt`。两个来源文件不可混用。未配置来源时不会启动扫描。旧的 `/data/ipv6` 目录不会自动迁移或删除。
+首次启动会自动创建两个空来源文件。请分别将适用于 CF1/CF2 和其他节点的 IPv6 CIDR 写入对应的 `ipv60.txt`、`ipv6.txt`。两个来源文件不可混用。未配置来源时不会启动扫描。旧的 `/data/ipv6` 目录不会自动迁移或删除。
 
 ## 扫描策略
 
@@ -36,10 +37,10 @@ NAS 端 IPv6 地址池管理服务。当前运行模式为两个完全隔离的 
 所有 `/api/v1/` 接口需要 `Authorization: Bearer <IP_POOL_API_TOKEN>`。
 
 - `GET /api/v1/status`
-- `GET /api/v1/ipv6_cf/pool`、`GET /api/v1/ipv6_other/pool`
+- `GET /api/v1/ipv60/pool`、`GET /api/v1/ipv6/pool`
 - `POST /api/v1/scan-cycle`
 - 两个池均支持原有的 `/{family}/scan`、`refresh`、`scan-refresh`、`result` 接口。
-- 为兼容旧客户端，`/api/v1/ipv6/pool` 及旧 IPv6 操作路径映射到 CF1/CF2 池。
+- `/api/v1/ipv6/pool` 对应其他节点池；`/api/v1/ipv60/pool` 对应 CF1/CF2 专用池。
 
 ## 部署
 
