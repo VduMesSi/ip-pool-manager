@@ -15,6 +15,8 @@ log = logging.getLogger("ip-pool")
 FAMILIES = {
     "ipv4": {"source": "ipv4.txt", "result": "result_ipv4.csv", "state": "pool_state_ipv4.json"},
     "ipv6": {"source": "ipv6.txt", "result": "result_ipv6.csv", "state": "pool_state_ipv6.json"},
+    "ipv6_cf": {"source": "ipv6_cf.txt", "result": "result_ipv6_cf.csv", "state": "pool_state_ipv6_cf.json"},
+    "ipv6_other": {"source": "ipv6_other.txt", "result": "result_ipv6_other.csv", "state": "pool_state_ipv6_other.json"},
 }
 
 def valid_ip(value, version):
@@ -41,7 +43,7 @@ def ip_weight(m):
 class PoolEngine:
     def __init__(self, family: str, data_dir: Path):
         if family not in FAMILIES:
-            raise ValueError("family must be ipv4 or ipv6")
+            raise ValueError("unknown pool family")
         self.family = family
         self.version = 4 if family == "ipv4" else 6
         self.paths = FAMILIES[family]
