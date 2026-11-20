@@ -223,8 +223,8 @@ async def run_full_cycle(engines):
                 len(v) for k,v in candidates.items() if k!=family)]
         queues={f:[v[i:i+BATCH_SIZE] for i in range(0,len(v),BATCH_SIZE)] for f,v in candidates.items()}
         schedule=[]
-        for i in range(max(len(queues["ipv4"]),len(queues["ipv6"]))):
-            for family in ("ipv4","ipv6"):
+        for i in range(max(len(queues["ipv6_cf"]),len(queues["ipv6_other"]))):
+            for family in ("ipv6_cf","ipv6_other"):
                 if i<len(queues[family]): schedule.append((family,queues[family][i]))
         if not schedule: return {"ok":False,"reason":"no_scan_targets"}
         total=sum(len(batch) for _,batch in schedule)
