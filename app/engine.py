@@ -201,7 +201,7 @@ class PoolEngine:
 
             # Use an explicit temporary output so a failed scan never destroys the last good CSV.
             cmd = [str(CFST_BIN), "-f", str(scan_input), "-o", str(scan_output),
-                   "-n", "20", "-tl", "120", "-dd", "-tlr", "0", "-p", "0"]
+                   "-n", "20", "-tl", "200" if self.family == "ipv60" else "120", "-dd", "-tlr", "0", "-p", "0"]
             log.info("%s CFST scan started (%d source entries, %d test targets)",
                      self.family, len(lines), len(sampled))
             try:
