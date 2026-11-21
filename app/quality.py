@@ -64,7 +64,7 @@ class QualityStore:
             row=by_day.get(key)
             if not row or row["samples"] < 1:
                 eligible=False; break
-            latency_limit = 165 if family == "ipv60" else 80
+            latency_limit = 160 if family == "ipv60" else 80
             if row["latency_sum"]/row["samples"] >= latency_limit or row["max_loss"] > 0:
                 eligible=False; break
         existing=db.execute("SELECT first_qualified_at FROM permanent_ips WHERE ip=? AND family=?",(ip,family)).fetchone()
