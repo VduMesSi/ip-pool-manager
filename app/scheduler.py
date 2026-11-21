@@ -19,8 +19,8 @@ TOTAL_TARGET=3000
 BATCH_SIZE=300
 CONCURRENCY=20
 PING_COUNT=4
-MAX_LATENCY=120
-BATCH_PAUSE_SECONDS=300
+MAX_LATENCY={"ipv60":200,"ipv6":120}
+BATCH_PAUSE_SECONDS=60
 CYCLE_LOCK=asyncio.Lock()
 
 def _read_source(path, version):
@@ -138,7 +138,7 @@ def _run_batch(engine,ips,batch_no,quality,day):
         input_path.write_text("\n".join(ips)+"\n",encoding="utf-8")
         output_path.unlink(missing_ok=True)
         cmd=[str(CFST_BIN),"-f",str(input_path),"-o",str(output_path),
-             "-n",str(CONCURRENCY),"-t",str(PING_COUNT),"-tl",str(MAX_LATENCY),
+             "-n",str(CONCURRENCY),"-t",str(PING_COUNT),"-tl",str(MAX_LATENCY[engine.family]),
              "-tlr","0","-dd","-p","0"]
         started=time.monotonic()
         proc=subprocess.run(cmd,cwd=str(base),capture_output=True,timeout=SCAN_TIMEOUT,check=False)
