@@ -1,0 +1,52 @@
+services:
+  ip-pool-manager:
+    image: ghcr.nju.edu.cn/vdumessi/ip-pool-manager:latest
+    container_name: ip-pool-manager
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      TZ: Asia/Taipei
+      DATA_DIR: /data
+      CFST_BIN: /opt/ip-pool/bin/CloudflareST
+      API_TOKEN: ${IP_POOL_API_TOKEN:?Set IP_POOL_API_TOKEN in the project .env}
+      POOL_MAX: "30"
+      POOL_MIN: "12"
+      ADD_PER_REFRESH: "5"
+      FRESH_TOP: "60"
+      SAMPLE_RATIO: "0.5"
+      IPV6_SCAN_TARGET: "1500"
+      SCAN_TIMEOUT: "1800"
+      COOLDOWN_MIN: "21600"
+      COOLDOWN_MAX: "86400"
+      BURN_SECONDS: "259200"
+      SCHEDULER_ENABLED: "true"
+    volumes:
+      - ${IP_POOL_HOME:?Set IP_POOL_HOME in the project .env}/data:/data
+      - ${IP_POOL_HOME:?Set IP_POOL_HOME in the project .env}/bin:/opt/ip-pool/bin:ro
+    security_opt:
+      - no-new-privileges:true
+
+  xray-manager:
+    image: ghcr.nju.edu.cn/vdumessi/xman:latest
+    container_name: xray-manager
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      TZ: Asia/Taipei
+      XMAN_SETTINGS: /opt/xray-manager/config/settings.yaml
+      XMAN_API_TOKEN: ${XMAN_API_TOKEN:?Set XMAN_API_TOKEN in the project .env}
+      XRAY_BIN: /usr/local/bin/xray
+      XRAY_LOCATION_ASSET: /opt/xray-manager/geo/current
+      LEGACY_DATA_DIR: /data
+      XMAN_STATE_DIR: /opt/xray-manager/data
+      XMAN_RUNTIME_DIR: /opt/xray-manager/data/runtime
+      GEO_DIR: /opt/xray-manager/geo
+      XMAN_DEFAULT_FAMILY: ${XMAN_DEFAULT_FAMILY:-ipv60}
+    volumes:
+      - ${IP_POOL_HOME:?Set IP_POOL_HOME in the project .env}/data:/data:ro
+      - ${XMAN_HOME:?Set XMAN_HOME in the project .env}/config:/opt/xray-manager/config:ro
+      - ${XMAN_HOME:?Set XMAN_HOME in the project .env}/data:/opt/xray-manager/data
+      - ${XMAN_HOME:?Set XMAN_HOME in the project .env}/geo:/opt/xray-manager/geo
+      - ${XMAN_HOME:?Set XMAN_HOME in the project .env}/bin/xray:/usr/local/bin/xray:ro
+    security_opt:
+      - no-new-privileges:true
